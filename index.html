@@ -69,23 +69,30 @@ body{
 
 /* hero */
 .hero{
-  background:linear-gradient(150deg,#eef4fd,#f8f0f6 70%,#fdf3ea);
-  border-radius:18px;padding:18px 18px 16px;margin-bottom:14px;
+  background:
+    linear-gradient(180deg, rgba(20,24,32,.32) 0%, rgba(20,24,32,.12) 38%, rgba(20,24,32,.5) 100%),
+    url('hero.jpg') center 55%/cover no-repeat;
+  border-radius:18px;padding:20px 18px 16px;margin-bottom:14px;min-height:230px;
+  display:flex;flex-direction:column;justify-content:space-between;
   position:relative;overflow:hidden;
 }
-.hero-art{
-  margin:14px -18px 14px;height:120px;position:relative;overflow:hidden;
+.hero .date{
+  font-size:11.5px;color:rgba(255,255,255,.92);margin-bottom:6px;letter-spacing:.03em;
+  display:flex;align-items:center;justify-content:space-between;
+  text-shadow:0 1px 4px rgba(0,0,0,.35);
 }
-.hero-art img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 60%}
-.hero .date{font-size:11.5px;color:var(--ink-3);margin-bottom:6px;letter-spacing:.03em;display:flex;align-items:center;justify-content:space-between}
 .streak{
-  display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.7);
+  display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.85);
   border-radius:999px;padding:3px 10px 3px 8px;font-size:11.5px;font-weight:500;color:#a3611f;
+  text-shadow:none;
 }
-.hero h1{font-family:'Zen Maru Gothic',sans-serif;font-size:21px;font-weight:700;margin:0 0 6px}
-.hero p{font-size:12.5px;color:var(--ink-2);margin:0;line-height:1.7}
+.hero h1{
+  font-family:'Zen Maru Gothic',sans-serif;font-size:21px;font-weight:700;margin:0 0 6px;
+  color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.4);
+}
+.hero p{font-size:12.5px;color:rgba(255,255,255,.95);margin:0;line-height:1.7;text-shadow:0 1px 4px rgba(0,0,0,.35)}
 .hero-quote{
-  margin-top:14px;background:rgba(255,255,255,.66);border-radius:12px;
+  margin-top:14px;background:rgba(255,255,255,.85);border-radius:12px;
   padding:12px 14px;font-family:'Zen Maru Gothic',sans-serif;
   font-size:13px;color:#3f4a5e;line-height:1.7;text-align:center;
 }
@@ -199,6 +206,7 @@ body{
   color:#fff;font-size:10px}
 .tick-s.on{background:var(--green);border-color:var(--green)}
 .sub-add{font-size:12px;color:var(--blue);padding:8px 2px;cursor:pointer}
+.sub-reorder-row{display:flex;justify-content:flex-end;padding:2px 2px 4px}
 
 /* review */
 .stat{
@@ -321,7 +329,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},sheet:null,userName:'たかはる'};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる'};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存 ---------- */
@@ -469,10 +477,6 @@ function daysUntil(dateStr){
 }
 
 /* ---------- 画面 ---------- */
-function heroArt(){
-  return '<div class="hero-art"><img src="hero.jpg" alt="" loading="lazy"></div>';
-}
-
 function viewToday(){
   var list=todayTasks();
   var reorder=S.reorderMode&&S.filter==='all';
@@ -506,7 +510,6 @@ function viewToday(){
       '</div>'+
       '<h1>'+greet()+'、'+esc(S.userName)+'さん!</h1>'+
       '<p>今日の一歩が、未来につながります。<br>まずは15分、やってみよう!</p>'+
-      heroArt()+
       '<div class="hero-quote">"'+quote()+'"</div>'+
     '</div>'+
     '<div class="sec-head"><span class="sec-title">今日のタスク</span>'+
@@ -556,12 +559,20 @@ function viewProjects(){
       var label=due<0?'期限切れ':due===0?'今日まで':'あと'+due+'日';
       dueBadge='<span class="proj-due '+cls+'">'+label+'</span>';
     }
+    var subReorder=!!S.subReorder[p.id];
     var subs=open?('<div class="subs">'+
-      p.subs.map(function(s){
+      (p.subs.length>1?('<div class="sub-reorder-row"><button class="reorder-btn '+(subReorder?'on':'')+'" data-subreorder="'+p.id+'">'+(subReorder?'完了':'並び替え')+'</button></div>'):'')+
+      p.subs.map(function(s,i){
+        var right=subReorder?
+          ('<div class="task-moves">'+
+            '<button class="move-btn" data-move="-1" data-movesub="'+p.id+'|'+s.id+'" '+(i===0?'disabled':'')+'>▲</button>'+
+            '<button class="move-btn" data-move="1" data-movesub="'+p.id+'|'+s.id+'" '+(i===p.subs.length-1?'disabled':'')+'>▼</button>'+
+          '</div>'):
+          ('<button class="del" data-delsub="'+p.id+'|'+s.id+'">×</button>');
         return '<div class="sub '+(s.done?'done':'')+'">'+
           '<div class="tick-s '+(s.done?'on':'')+'" data-sub="'+p.id+'|'+s.id+'">'+(s.done?'✓':'')+'</div>'+
           '<div class="sub-title">'+esc(s.title)+'</div>'+
-          '<button class="del" data-delsub="'+p.id+'|'+s.id+'">×</button></div>';
+          right+'</div>';
       }).join('')+
       '<div class="sub-add" data-newsub="'+p.id+'">＋ ステップを追加</div></div>'):'';
     return '<div class="proj">'+
@@ -729,6 +740,17 @@ function bind(){
   }});
   q('[data-newsub]',function(el){el.onclick=function(){
     S.sheet={type:'sub',id:null,projId:el.dataset.newsub,title:''};render();
+  }});
+  q('[data-subreorder]',function(el){el.onclick=function(){
+    var id=el.dataset.subreorder;S.subReorder[id]=!S.subReorder[id];render();
+  }});
+  q('[data-movesub]',function(el){el.onclick=function(){
+    var parts=el.dataset.movesub.split('|'),pr=find(S.projects,parts[0]);if(!pr)return;
+    var idx=pr.subs.findIndex(function(x){return x.id===parts[1]});
+    var dir=parseInt(el.dataset.move,10),j=idx+dir;
+    if(idx<0||j<0||j>=pr.subs.length)return;
+    var tmp=pr.subs[idx]; pr.subs[idx]=pr.subs[j]; pr.subs[j]=tmp;
+    save();render();
   }});
   q('[data-editgoal]',function(el){el.onclick=function(){
     var go=find(S.goals,el.dataset.editgoal);if(!go)return;
