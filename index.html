@@ -297,6 +297,8 @@ body{
 <div id="root"><div class="loading">読み込み中...</div></div>
 <div class="nav"><div class="nav-inner" id="nav"></div></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script>
 /* ---------- 定数 ---------- */
 var TABS=[
@@ -330,78 +332,121 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
-/* ---------- 保存 ---------- */
+/* ---------- 保存(端末ローカル + クラウド同期) ---------- */
 function todayKey(d){d=d||new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
 function pad(n){return n<10?'0'+n:''+n}
 
 var KEY='mirastep-data';
-var MEM=null;          /* 保存が使えない場合のメモリ内フォールバック */
-var STORAGE_OK=true;   /* 保存が生きているか */
+var MEM=null;
+var STORAGE_OK=true;   /* この端末への保存が生きているか(ローカル) */
 
-/* このアプリはClaude内(window.storage)でも、GitHub Pagesなど普通のWeb環境
-   (localStorage)でも動くように、両対応にしてある */
-async function rawSet(val){
-  if(window.storage&&window.storage.set){
-    try{ return await window.storage.set(KEY,val,false); }
-    catch(e1){
-      try{ return await window.storage.set(KEY,val); }
-      catch(e2){ /* window.storageが失敗したらlocalStorageへ */ }
-    }
+/* --- Firebase(Firestore)でのクラウド同期 --- */
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyBfupKAAniujgx5TZvsQi9t1dvtQgsnaDc",
+  authDomain:"mirastep-180d3.firebaseapp.com",
+  projectId:"mirastep-180d3",
+  storageBucket:"mirastep-180d3.firebasestorage.app",
+  messagingSenderId:"577222995471",
+  appId:"1:577222995471:web:56e89249fb425cd6f53d7a"
+};
+var USER_ID='takaharu-mirastep-main';
+var fsDb=null,fsDocRef=null,fsUnsub=null,fsReady=false;
+try{
+  if(typeof firebase!=='undefined'){
+    firebase.initializeApp(FIREBASE_CONFIG);
+    fsDb=firebase.firestore();
+    fsDocRef=fsDb.doc('users/'+USER_ID+'/appdata/main');
+    fsReady=true;
   }
-  try{ localStorage.setItem(KEY,val); return {key:KEY,value:val}; }
-  catch(e3){ throw new Error('no storage available'); }
-}
-async function rawGet(){
-  if(window.storage&&window.storage.get){
-    try{ return await window.storage.get(KEY,false); }
-    catch(e1){
-      try{ return await window.storage.get(KEY); }
-      catch(e2){ /* window.storageが失敗したらlocalStorageへ */ }
-    }
-  }
-  try{
-    var v=localStorage.getItem(KEY);
-    return v==null?null:{key:KEY,value:v};
-  }catch(e3){ throw new Error('no storage available'); }
-}
+}catch(e){ fsReady=false; }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt});
 }
 function apply(str){
   var d=JSON.parse(str);
   S.tasks=d.tasks||[];S.goals=d.goals||[];S.projects=d.projects||[];S.log=d.log||{};
   if(d.userName)S.userName=d.userName;
+  S.updatedAt=d.updatedAt||0;
 }
 
 async function load(){
   var got=false;
   try{
-    var r=await rawGet();
-    var v=r&&(typeof r==='string'?r:r.value);
-    if(v&&typeof v==='string'){ apply(v); got=true; }
-  }catch(e){ /* 未保存 or 保存機能なし。下でシードする */ }
+    var raw=localStorage.getItem(KEY);
+    if(raw){ apply(raw); got=true; }
+  }catch(e){ /* この端末に保存できない環境 */ }
+  if(!got&&window.storage&&window.storage.get){
+    try{ var r=await window.storage.get(KEY,false); if(r&&r.value){apply(r.value);got=true;} }catch(e){}
+  }
   if(!got) seed();
   rollTasks();
   render();
+  initCloudSync();
 }
 
 var saveTimer=null;
 function save(){
-  MEM=payload();                       /* まずメモリに確実に保持 */
-  if(saveTimer)clearTimeout(saveTimer);
-  saveTimer=setTimeout(flush,250);     /* 連打時に呼びすぎない */
-}
-async function flush(){
-  try{
-    await rawSet(MEM);
-    if(!STORAGE_OK){STORAGE_OK=true;render();}
-  }catch(e){
-    if(STORAGE_OK){STORAGE_OK=false;render();}
+  S.updatedAt=Date.now();
+  MEM=payload();
+  try{ localStorage.setItem(KEY,MEM); if(!STORAGE_OK){STORAGE_OK=true;render();} }
+  catch(e){ if(STORAGE_OK){STORAGE_OK=false;render();} }
+  if(window.storage&&window.storage.set){
+    window.storage.set(KEY,MEM,false).catch(function(){
+      window.storage.set(KEY,MEM).catch(function(){});
+    });
   }
+  if(saveTimer)clearTimeout(saveTimer);
+  saveTimer=setTimeout(flush,250);
+}
+function flush(){ pushCloud(MEM); }
+
+function pushCloud(val){
+  if(!fsReady) return Promise.resolve();
+  return fsDocRef.set({blob:val}).catch(function(){ /* オフライン等。次回同期時に再送される */ });
+}
+
+function initCloudSync(){
+  if(!fsReady) return;
+  fsDocRef.get().then(function(snap){
+    if(snap.exists){
+      var remote=snap.data();
+      if(remote&&remote.blob){
+        var remoteUpdated=0;
+        try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){}
+        if(remoteUpdated>(S.updatedAt||0)){
+          apply(remote.blob);
+          try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
+          rollTasks();render();
+        }else if((S.updatedAt||0)>remoteUpdated){
+          pushCloud(payload());
+        }
+      }
+    }else{
+      pushCloud(payload());
+    }
+    subscribeCloud();
+  }).catch(function(){ /* ネットワーク不通など。ローカルのみで継続 */ });
+}
+
+function subscribeCloud(){
+  if(!fsReady||fsUnsub) return;
+  fsUnsub=fsDocRef.onSnapshot(function(snap){
+    if(snap.metadata.hasPendingWrites) return; /* 自分の書き込みのエコーは無視 */
+    if(!snap.exists) return;
+    var remote=snap.data();
+    if(!remote||!remote.blob) return;
+    var remoteUpdated=0;
+    try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){ return; }
+    if(remoteUpdated>(S.updatedAt||0)){
+      apply(remote.blob);
+      try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
+      rollTasks();render();
+    }
+  },function(){ /* 同期エラーは静かに無視、ローカルは引き続き機能する */ });
 }
 function seed(){
   S.goals=[

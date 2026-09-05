@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mirastep-v2';
+const CACHE_NAME = 'mirastep-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -26,6 +26,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return; // Firebase等の外部通信には関与しない
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const network = fetch(event.request)
