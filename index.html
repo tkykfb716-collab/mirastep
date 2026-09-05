@@ -332,7 +332,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -355,13 +355,15 @@ var FIREBASE_CONFIG={
 var USER_ID='takaharu-mirastep-main';
 var fsDb=null,fsDocRef=null,fsUnsub=null,fsReady=false;
 try{
-  if(typeof firebase!=='undefined'){
+  if(typeof firebase==='undefined'){
+    S.cloudError='Firebase SDKが読み込めていません(スクリプトの読み込み失敗)';
+  }else{
     firebase.initializeApp(FIREBASE_CONFIG);
     fsDb=firebase.firestore();
     fsDocRef=fsDb.doc('users/'+USER_ID+'/appdata/main');
     fsReady=true;
   }
-}catch(e){ fsReady=false; }
+}catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
   return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt});
@@ -406,7 +408,11 @@ function flush(){ pushCloud(MEM); }
 
 function pushCloud(val){
   if(!fsReady) return Promise.resolve();
-  return fsDocRef.set({blob:val}).catch(function(){ /* オフライン等。次回同期時に再送される */ });
+  return fsDocRef.set({blob:val}).then(function(){
+    if(S.cloudError){ S.cloudError=null; render(); }
+  }).catch(function(e){
+    S.cloudError='保存エラー: '+(e&&e.message||e); render();
+  });
 }
 
 function initCloudSync(){
@@ -429,7 +435,7 @@ function initCloudSync(){
       pushCloud(payload());
     }
     subscribeCloud();
-  }).catch(function(){ /* ネットワーク不通など。ローカルのみで継続 */ });
+  }).catch(function(e){ S.cloudError='読み込みエラー: '+(e&&e.message||e); render(); });
 }
 
 function subscribeCloud(){
@@ -446,7 +452,7 @@ function subscribeCloud(){
       try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
       rollTasks();render();
     }
-  },function(){ /* 同期エラーは静かに無視、ローカルは引き続き機能する */ });
+  },function(e){ S.cloudError='リアルタイム同期エラー: '+(e&&e.message||e); render(); });
 }
 function seed(){
   S.goals=[
@@ -800,6 +806,7 @@ function render(){
       '<span class="page-name">'+tab.head+'</span></div>'+
     '<div class="wrap">'+
       (STORAGE_OK?'':'<div class="warn">保存機能が使えない環境のようです。この画面を閉じると内容は消えます。</div>')+
+      (S.cloudError?'<div class="warn" style="color:#c0392b;background:#fdeceb">同期エラー: '+esc(S.cloudError)+'</div>':'')+
       v+'</div>'+sheetHTML();
 
   navEl.innerHTML=TABS.map(function(t){
