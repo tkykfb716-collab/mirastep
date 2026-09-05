@@ -172,6 +172,7 @@ body{
   display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;
 }
 .goal-when{font-size:11.5px;font-weight:700;letter-spacing:.03em}
+.goal-period{font-weight:500;opacity:.75}
 .goal-title{font-family:'Zen Maru Gothic',sans-serif;font-weight:700;font-size:15.5px;line-height:1.5;margin-bottom:4px}
 .goal-note{font-size:12px;color:var(--ink-2);line-height:1.6}
 .ladder-arrow{text-align:center;color:#c7cede;font-size:13px;padding:5px 0}
@@ -329,7 +330,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる'};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存 ---------- */
@@ -475,6 +476,19 @@ function daysUntil(dateStr){
   var d=new Date(dateStr+'T00:00:00');
   return Math.round((d-today)/86400000);
 }
+function horizonPeriod(id){
+  var now=new Date();
+  if(id==='future') return '5年後〜';
+  if(id==='year') return now.getFullYear()+'年';
+  if(id==='month') return (now.getMonth()+1)+'月';
+  if(id==='week'){
+    var dow=(now.getDay()+6)%7,mon=new Date(now);mon.setDate(now.getDate()-dow);
+    var sun=new Date(mon);sun.setDate(mon.getDate()+6);
+    return (mon.getMonth()+1)+'/'+mon.getDate()+'〜'+(sun.getMonth()+1)+'/'+sun.getDate();
+  }
+  if(id==='day') return (now.getMonth()+1)+'/'+now.getDate();
+  return '';
+}
 
 /* ---------- 画面 ---------- */
 function viewToday(){
@@ -522,14 +536,15 @@ function viewToday(){
 
 function viewGoals(){
   var body=HORIZONS.map(function(h,i){
-    var gs=S.goals.filter(function(x){return x.horizon===h.id});
+    var gs=S.goals.filter(function(x){return x.horizon===h.id&&!x.done});
     if(!gs.length)return '';
+    var period=horizonPeriod(h.id);
     var cards=gs.map(function(go){
-      return '<div class="goal '+(go.done?'goal-done':'')+'" style="background:'+h.bg+'">'+
+      return '<div class="goal" style="background:'+h.bg+'">'+
         '<button class="goal-edit" data-editgoal="'+go.id+'">✎</button>'+
         '<div class="goal-head"><div class="goal-emoji">'+h.emoji+'</div>'+
-          '<span class="goal-when" style="color:'+h.c+'">'+h.label+'</span>'+
-          '<button class="goal-check '+(go.done?'on':'')+'" data-goaldone="'+go.id+'">'+(go.done?'✓ 達成':'達成にする')+'</button>'+
+          '<span class="goal-when" style="color:'+h.c+'">'+h.label+(period?' <span class="goal-period">('+period+')</span>':'')+'</span>'+
+          '<button class="goal-check" data-goaldone="'+go.id+'">達成にする</button>'+
         '</div>'+
         '<div class="goal-title">'+esc(go.title)+'</div>'+
         (go.note?'<div class="goal-note">'+esc(go.note)+'</div>':'')+
@@ -538,12 +553,31 @@ function viewGoals(){
     return cards+(i<HORIZONS.length-1?'<div class="ladder-arrow">▾</div>':'');
   }).join('');
 
-  if(!S.goals.length) body='<div class="card"><div class="empty">目標がまだありません。<br>「未来」から逆算して決めていこう。</div></div>';
+  var hasActive=S.goals.some(function(x){return !x.done});
+  if(!hasActive) body='<div class="card"><div class="empty">目標がまだありません。<br>「未来」から逆算して決めていこう。</div></div>';
+
+  var doneGoals=S.goals.filter(function(x){return x.done});
+  var doneSection='';
+  if(doneGoals.length){
+    var open=!!S.showDoneGoals;
+    var doneRows=open?doneGoals.map(function(go){
+      var h=hz(go.horizon);
+      return '<div class="task"><div class="tick on">✓</div><div class="task-main">'+
+        '<div class="task-title" style="color:var(--ink-2)">'+esc(go.title)+'</div>'+
+        '<div class="task-sub"><span class="tag" style="color:'+h.c+';background:'+h.bg+'">'+h.label+'</span></div>'+
+        '</div><button class="del" data-goaldone="'+go.id+'" title="達成を取り消す">戻す</button></div>';
+    }).join(''):'';
+    doneSection='<div class="card" style="margin-top:14px">'+
+      '<div class="add-row" data-toggledone="1">'+(open?'▲ 隠す':'▼ 達成済みの目標を見る ('+doneGoals.length+')')+'</div>'+
+      doneRows+
+    '</div>';
+  }
 
   return '<div class="sec-head"><span class="sec-title">未来から、今日へ</span></div>'+
     '<div style="font-size:12.5px;color:var(--ink-2);margin:0 2px 14px;line-height:1.7">このタスクは、何のため?<br>未来から逆算して、今を決める。</div>'+
     body+
     '<div class="card" style="margin-top:14px"><div class="add-row" data-new="goal">＋ 目標を追加</div></div>'+
+    doneSection+
     '<div class="footer-quote">"未来は、今この瞬間の選択でつくられる。"</div>';
 }
 
@@ -615,6 +649,27 @@ function viewReview(){
   }).join('');
 
   var msg = n===0?'まだこれから。1つでも大丈夫。':n<3?'いい調子!':'よくやった!';
+
+  var projRows=S.projects.length?S.projects.map(function(p){
+    var total=p.subs.length,pdone=p.subs.filter(function(s){return s.done}).length;
+    var pct=total?Math.round(pdone/total*100):0;
+    var due=daysUntil(p.deadline),dueBadge='';
+    if(due!=null){
+      var cls=due<0?'over':due<=3?'soon':'ok';
+      var label=due<0?'期限切れ':due===0?'今日まで':'あと'+due+'日';
+      dueBadge='<span class="proj-due '+cls+'">'+label+'</span>';
+    }
+    return '<div class="proj">'+
+      '<div class="proj-head">'+
+        '<div class="proj-emoji" style="background:var(--line-soft)">'+p.emoji+'</div>'+
+        '<div class="proj-name">'+esc(p.name)+'</div>'+
+        dueBadge+
+        '<div class="proj-pct">'+pct+'%</div>'+
+      '</div>'+
+      '<div class="bar"><span style="width:'+pct+'%;background:'+p.color+'"></span></div>'+
+    '</div>';
+  }).join(''):'';
+
   var achieved=S.goals.filter(function(g){return g.done});
   var achievedRows=achieved.length?achieved.map(function(g){
     var h=hz(g.horizon);
@@ -636,6 +691,10 @@ function viewReview(){
     '<div class="sec-head"><span class="sec-title">今週の進捗</span></div>'+
     '<div class="card"><div class="week">'+bars+'</div>'+
       '<div class="week-note">今週、未来へ <b>'+wsum+'</b> 歩 進みました!</div></div>'+
+    (S.projects.length?(
+      '<div class="sec-head"><span class="sec-title">プロジェクトの進捗</span></div>'+
+      '<div class="card">'+projRows+'</div>'
+    ):'')+
     (achieved.length?(
       '<div class="sec-head"><span class="sec-title">達成した目標</span></div>'+
       '<div class="card">'+achievedRows+'</div>'
@@ -743,6 +802,9 @@ function bind(){
   }});
   q('[data-subreorder]',function(el){el.onclick=function(){
     var id=el.dataset.subreorder;S.subReorder[id]=!S.subReorder[id];render();
+  }});
+  q('[data-toggledone]',function(el){el.onclick=function(){
+    S.showDoneGoals=!S.showDoneGoals;render();
   }});
   q('[data-movesub]',function(el){el.onclick=function(){
     var parts=el.dataset.movesub.split('|'),pr=find(S.projects,parts[0]);if(!pr)return;
