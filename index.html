@@ -160,13 +160,23 @@ body{
 .goal{border-radius:16px;padding:15px 16px;border:1px solid transparent;position:relative}
 .goal-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
 .goal-check{
-  margin-left:auto;font-size:10.5px;font-weight:500;color:var(--ink-2);
+  font-size:11.5px;font-weight:500;color:var(--ink-2);
   background:rgba(255,255,255,.7);border:1px solid rgba(0,0,0,.08);border-radius:999px;
-  padding:4px 10px;cursor:pointer;font-family:inherit;white-space:nowrap;
+  padding:5px 12px;cursor:pointer;font-family:inherit;white-space:nowrap;display:inline-block;
 }
 .goal-check.on{background:var(--green);border-color:var(--green);color:#fff}
 .goal.goal-done{opacity:.6}
 .goal.goal-done .goal-title{text-decoration:line-through}
+.goal.goal-expired{border-color:rgba(192,57,43,.35)}
+.period-stepper{
+  display:flex;align-items:center;gap:12px;background:#fbfcfe;border:1px solid var(--line);
+  border-radius:11px;padding:9px 14px;font-size:13.5px;font-weight:500;justify-content:space-between;
+}
+.pstep{
+  width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:#fff;
+  color:var(--ink-2);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-family:inherit;flex-shrink:0;
+}
 .goal-emoji{
   width:30px;height:30px;border-radius:10px;background:rgba(255,255,255,.75);
   display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;
@@ -385,6 +395,7 @@ async function load(){
     try{ var r=await window.storage.get(KEY,false); if(r&&r.value){apply(r.value);got=true;} }catch(e){}
   }
   if(!got) seed();
+  migrateGoalPeriods();
   rollTasks();
   render();
   initCloudSync();
@@ -425,6 +436,7 @@ function initCloudSync(){
         try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){}
         if(remoteUpdated>(S.updatedAt||0)){
           apply(remote.blob);
+          migrateGoalPeriods();
           try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
           rollTasks();render();
         }else if((S.updatedAt||0)>remoteUpdated){
@@ -449,6 +461,7 @@ function subscribeCloud(){
     try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){ return; }
     if(remoteUpdated>(S.updatedAt||0)){
       apply(remote.blob);
+      migrateGoalPeriods();
       try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
       rollTasks();render();
     }
@@ -541,6 +554,59 @@ function horizonPeriod(id){
   return '';
 }
 
+/* 月・週の目標は「いつの分か」を明示的に持てるようにする(先の月・週も計画できる) */
+function currentMonthPeriod(){ var n=new Date(); return {y:n.getFullYear(),m:n.getMonth()+1}; }
+function currentWeekPeriod(){
+  var n=new Date(),dow=(n.getDay()+6)%7,mon=new Date(n);
+  mon.setDate(n.getDate()-dow);mon.setHours(0,0,0,0);
+  return {monday:todayKey(mon)};
+}
+function shiftMonthPeriod(p,delta){
+  var total=p.y*12+(p.m-1)+delta;
+  return {y:Math.floor(total/12),m:(total%12)+1};
+}
+function shiftWeekPeriod(p,delta){
+  var d=new Date(p.monday+'T00:00:00');d.setDate(d.getDate()+delta*7);
+  return {monday:todayKey(d)};
+}
+function monthPeriodLabel(p){ return p.m+'月'; }
+function monthPeriodLabelFull(p){
+  var c=currentMonthPeriod();
+  return (p.y!==c.y?p.y+'年':'')+p.m+'月';
+}
+function weekPeriodLabel(p){
+  var mon=new Date(p.monday+'T00:00:00'),sun=new Date(mon);sun.setDate(mon.getDate()+6);
+  return (mon.getMonth()+1)+'/'+mon.getDate()+'〜'+(sun.getMonth()+1)+'/'+sun.getDate();
+}
+function monthPeriodEnd(p){ return new Date(p.y,p.m,0,23,59,59,999); }
+function weekPeriodEnd(p){
+  var mon=new Date(p.monday+'T00:00:00'),sun=new Date(mon);sun.setDate(mon.getDate()+6);sun.setHours(23,59,59,999);
+  return sun;
+}
+function periodSortKey(g){
+  if(g.horizon==='month'&&g.period) return g.period.y*12+g.period.m;
+  if(g.horizon==='week'&&g.period) return g.period.monday;
+  return 0;
+}
+function isCurrentPeriod(g){
+  if(g.horizon==='month'&&g.period){ var c=currentMonthPeriod(); return g.period.y===c.y&&g.period.m===c.m; }
+  if(g.horizon==='week'&&g.period){ var c=currentWeekPeriod(); return g.period.monday===c.monday; }
+  return true;
+}
+function isGoalExpired(g){
+  if(g.done) return false;
+  if(g.horizon==='month'&&g.period) return monthPeriodEnd(g.period)<new Date();
+  if(g.horizon==='week'&&g.period) return weekPeriodEnd(g.period)<new Date();
+  return false;
+}
+/* 既存データ(期間情報を持たない古い目標)に、現在の期間を割り当てて移行する */
+function migrateGoalPeriods(){
+  S.goals.forEach(function(g){
+    if(g.horizon==='month'&&!g.period) g.period=currentMonthPeriod();
+    if(g.horizon==='week'&&!g.period) g.period=currentWeekPeriod();
+  });
+}
+
 /* ---------- 画面 ---------- */
 function viewToday(){
   var list=todayTasks();
@@ -589,16 +655,26 @@ function viewGoals(){
   var body=HORIZONS.map(function(h,i){
     var gs=S.goals.filter(function(x){return x.horizon===h.id&&!x.done});
     if(!gs.length)return '';
-    var period=horizonPeriod(h.id);
+    if(h.id==='month'||h.id==='week'){
+      gs=gs.slice().sort(function(a,b){return periodSortKey(a)>periodSortKey(b)?1:-1;});
+    }
     var cards=gs.map(function(go){
-      return '<div class="goal" style="background:'+h.bg+'">'+
+      var isCur=isCurrentPeriod(go);
+      var expired=isGoalExpired(go);
+      var periodText;
+      if(go.horizon==='month'&&go.period) periodText=monthPeriodLabelFull(go.period);
+      else if(go.horizon==='week'&&go.period) periodText=weekPeriodLabel(go.period);
+      else periodText=horizonPeriod(h.id);
+      var whenLabel=isCur?(h.label+(periodText?' <span class="goal-period">('+periodText+')</span>':'')):periodText;
+      return '<div class="goal '+(expired?'goal-expired':'')+'" style="background:'+h.bg+'">'+
         '<button class="goal-edit" data-editgoal="'+go.id+'">✎</button>'+
         '<div class="goal-head"><div class="goal-emoji">'+h.emoji+'</div>'+
-          '<span class="goal-when" style="color:'+h.c+'">'+h.label+(period?' <span class="goal-period">('+period+')</span>':'')+'</span>'+
-          '<button class="goal-check" data-goaldone="'+go.id+'">達成にする</button>'+
+          '<span class="goal-when" style="color:'+h.c+'">'+whenLabel+'</span>'+
+          (expired?'<span class="proj-due over" style="margin-left:6px">期限切れ</span>':'')+
         '</div>'+
         '<div class="goal-title">'+esc(go.title)+'</div>'+
         (go.note?'<div class="goal-note">'+esc(go.note)+'</div>':'')+
+        '<button class="goal-check" data-goaldone="'+go.id+'" style="margin-top:8px">達成にする</button>'+
       '</div>';
     }).join('<div style="height:8px"></div>');
     return cards+(i<HORIZONS.length-1?'<div class="ladder-arrow">▾</div>':'');
@@ -767,10 +843,23 @@ function sheetHTML(){
         [5,15,30,60].map(function(m){return '<button class="opt '+(s.mins===m?'on':'')+'" data-pick="mins|'+m+'" style="'+(s.mins===m?'color:var(--blue);background:var(--blue-soft)':'')+'">'+m+'分</button>'}).join('')+
       '</div></div>';
   } else if(s.type==='goal'){
+    var periodRow='';
+    if(s.horizon==='month'&&s.period){
+      periodRow='<div class="f"><label>期間</label><div class="period-stepper">'+
+        '<button type="button" class="pstep" data-periodstep="-1">‹</button>'+
+        '<span>'+monthPeriodLabelFull(s.period)+'</span>'+
+        '<button type="button" class="pstep" data-periodstep="1">›</button></div></div>';
+    } else if(s.horizon==='week'&&s.period){
+      periodRow='<div class="f"><label>期間</label><div class="period-stepper">'+
+        '<button type="button" class="pstep" data-periodstep="-1">‹</button>'+
+        '<span>'+weekPeriodLabel(s.period)+'</span>'+
+        '<button type="button" class="pstep" data-periodstep="1">›</button></div></div>';
+    }
     inner='<h2>'+(s.id?'目標を編集':'目標を追加')+'</h2>'+
       '<div class="f"><label>いつの目標?</label><div class="opts">'+
         HORIZONS.map(function(h){return '<button class="opt '+(s.horizon===h.id?'on':'')+'" data-pick="horizon|'+h.id+'" style="color:'+h.c+';'+(s.horizon===h.id?'background:'+h.bg:'')+'">'+h.emoji+' '+h.label+'</button>'}).join('')+
       '</div></div>'+
+      periodRow+
       '<div class="f"><label>目標</label><input id="i-title" value="'+att(s.title)+'" placeholder="例: 講座を公開する"><div class="err" id="e-title"></div></div>'+
       '<div class="f"><label>ひとこと(任意)</label><textarea id="i-note" placeholder="具体的な状態や数字">'+esc(s.note)+'</textarea></div>';
   } else if(s.type==='proj'){
@@ -868,7 +957,7 @@ function bind(){
   }});
   q('[data-editgoal]',function(el){el.onclick=function(){
     var go=find(S.goals,el.dataset.editgoal);if(!go)return;
-    S.sheet={type:'goal',id:go.id,title:go.title,note:go.note||'',horizon:go.horizon};render();
+    S.sheet={type:'goal',id:go.id,title:go.title,note:go.note||'',horizon:go.horizon,period:go.period?JSON.parse(JSON.stringify(go.period)):null};render();
   }});
   q('[data-goaldone]',function(el){el.onclick=function(e){
     e.stopPropagation();
@@ -883,7 +972,7 @@ function bind(){
   q('[data-new]',function(el){el.onclick=function(){
     var k=el.dataset.new;
     if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15};
-    if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week'};
+    if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week',period:currentWeekPeriod()};
     if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
     render();
   }});
@@ -893,7 +982,20 @@ function bind(){
     keepInput();
     if(p[0]==='mins')S.sheet.mins=parseInt(p[1],10);
     else if(p[0]==='color')S.sheet.color=PROJ_COLORS[parseInt(p[1],10)];
+    else if(p[0]==='horizon'){
+      S.sheet.horizon=p[1];
+      if(p[1]==='month') S.sheet.period=currentMonthPeriod();
+      else if(p[1]==='week') S.sheet.period=currentWeekPeriod();
+      else S.sheet.period=null;
+    }
     else S.sheet[p[0]]=p[1];
+    render();
+  }});
+  q('[data-periodstep]',function(el){el.onclick=function(){
+    keepInput();
+    var delta=parseInt(el.dataset.periodstep,10);
+    if(S.sheet.horizon==='month') S.sheet.period=shiftMonthPeriod(S.sheet.period,delta);
+    else if(S.sheet.horizon==='week') S.sheet.period=shiftWeekPeriod(S.sheet.period,delta);
     render();
   }});
 
@@ -922,8 +1024,8 @@ function submit(){
     else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey(),order:Date.now()});
   }
   if(s.type==='goal'){
-    if(s.id){var go=find(S.goals,s.id);go.title=title;go.note=(s.note||'').trim();go.horizon=s.horizon}
-    else S.goals.push({id:g(),horizon:s.horizon,title:title,note:(s.note||'').trim()});
+    if(s.id){var go=find(S.goals,s.id);go.title=title;go.note=(s.note||'').trim();go.horizon=s.horizon;go.period=s.period||null}
+    else S.goals.push({id:g(),horizon:s.horizon,title:title,note:(s.note||'').trim(),period:s.period||null});
   }
   if(s.type==='proj'){
     if(s.id){var p=find(S.projects,s.id);p.name=title;p.emoji=s.emoji;p.color=s.color;p.deadline=s.deadline||''}
