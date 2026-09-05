@@ -74,10 +74,14 @@ body{
   position:relative;overflow:hidden;
 }
 .hero-art{
-  margin:14px -18px 14px;height:108px;position:relative;overflow:hidden;
+  margin:14px -18px 14px;height:120px;position:relative;overflow:hidden;
 }
-.hero-art svg{width:100%;height:100%;display:block}
-.hero .date{font-size:11.5px;color:var(--ink-3);margin-bottom:6px;letter-spacing:.03em}
+.hero-art img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 60%}
+.hero .date{font-size:11.5px;color:var(--ink-3);margin-bottom:6px;letter-spacing:.03em;display:flex;align-items:center;justify-content:space-between}
+.streak{
+  display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.7);
+  border-radius:999px;padding:3px 10px 3px 8px;font-size:11.5px;font-weight:500;color:#a3611f;
+}
 .hero h1{font-family:'Zen Maru Gothic',sans-serif;font-size:21px;font-weight:700;margin:0 0 6px}
 .hero p{font-size:12.5px;color:var(--ink-2);margin:0;line-height:1.7}
 .hero-quote{
@@ -89,6 +93,18 @@ body{
 .sec-head{display:flex;align-items:baseline;justify-content:space-between;margin:20px 2px 10px}
 .sec-title{font-family:'Zen Maru Gothic',sans-serif;font-weight:700;font-size:15px}
 .sec-meta{font-size:11.5px;color:var(--ink-3)}
+.sec-meta-row{display:flex;align-items:center;gap:10px}
+.reorder-btn{
+  font-size:11px;color:var(--blue);background:none;border:1px solid var(--line);
+  border-radius:999px;padding:4px 10px;font-family:inherit;cursor:pointer;
+}
+.reorder-btn.on{background:var(--blue);border-color:var(--blue);color:#fff}
+.task-moves{display:flex;flex-direction:column;gap:3px;flex-shrink:0}
+.task-moves .move-btn{
+  width:22px;height:19px;font-size:10px;border:1px solid var(--line);background:#fff;
+  color:var(--ink-2);border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+}
+.task-moves .move-btn:disabled{opacity:.25}
 
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
 .pad{padding:6px 4px}
@@ -136,6 +152,14 @@ body{
 /* goals ladder */
 .goal{border-radius:16px;padding:15px 16px;border:1px solid transparent;position:relative}
 .goal-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.goal-check{
+  margin-left:auto;font-size:10.5px;font-weight:500;color:var(--ink-2);
+  background:rgba(255,255,255,.7);border:1px solid rgba(0,0,0,.08);border-radius:999px;
+  padding:4px 10px;cursor:pointer;font-family:inherit;white-space:nowrap;
+}
+.goal-check.on{background:var(--green);border-color:var(--green);color:#fff}
+.goal.goal-done{opacity:.6}
+.goal.goal-done .goal-title{text-decoration:line-through}
 .goal-emoji{
   width:30px;height:30px;border-radius:10px;background:rgba(255,255,255,.75);
   display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;
@@ -159,6 +183,10 @@ body{
 }
 .proj-name{font-weight:500;font-size:14.5px;flex:1;min-width:0}
 .proj-pct{font-size:12px;color:var(--ink-2);font-weight:500;flex-shrink:0}
+.proj-due{font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:500;flex-shrink:0;white-space:nowrap}
+.proj-due.ok{color:var(--ink-3);background:var(--line-soft)}
+.proj-due.soon{color:#a3611f;background:var(--amber-soft)}
+.proj-due.over{color:#c0392b;background:#fdeceb}
 .proj-caret{background:none;border:none;color:var(--ink-3);font-size:13px;cursor:pointer;padding:2px 0 2px 4px}
 .bar{height:6px;border-radius:99px;background:var(--line-soft);margin-top:9px;overflow:hidden}
 .bar span{display:block;height:100%;border-radius:99px;transition:width .3s}
@@ -304,16 +332,31 @@ var KEY='mirastep-data';
 var MEM=null;          /* 保存が使えない場合のメモリ内フォールバック */
 var STORAGE_OK=true;   /* 保存が生きているか */
 
-/* 環境によって set/get のシグネチャが違うので順に試す */
+/* このアプリはClaude内(window.storage)でも、GitHub Pagesなど普通のWeb環境
+   (localStorage)でも動くように、両対応にしてある */
 async function rawSet(val){
-  if(!window.storage||!window.storage.set) throw new Error('no storage');
-  try{ return await window.storage.set(KEY,val,false); }
-  catch(e1){ return await window.storage.set(KEY,val); }
+  if(window.storage&&window.storage.set){
+    try{ return await window.storage.set(KEY,val,false); }
+    catch(e1){
+      try{ return await window.storage.set(KEY,val); }
+      catch(e2){ /* window.storageが失敗したらlocalStorageへ */ }
+    }
+  }
+  try{ localStorage.setItem(KEY,val); return {key:KEY,value:val}; }
+  catch(e3){ throw new Error('no storage available'); }
 }
 async function rawGet(){
-  if(!window.storage||!window.storage.get) throw new Error('no storage');
-  try{ return await window.storage.get(KEY,false); }
-  catch(e1){ return await window.storage.get(KEY); }
+  if(window.storage&&window.storage.get){
+    try{ return await window.storage.get(KEY,false); }
+    catch(e1){
+      try{ return await window.storage.get(KEY); }
+      catch(e2){ /* window.storageが失敗したらlocalStorageへ */ }
+    }
+  }
+  try{
+    var v=localStorage.getItem(KEY);
+    return v==null?null:{key:KEY,value:v};
+  }catch(e3){ throw new Error('no storage available'); }
 }
 
 function payload(){
@@ -396,7 +439,11 @@ function jpDate(d){
 }
 function greet(){var h=new Date().getHours();return h<11?'おはよう':h<18?'こんにちは':'おつかれさま'}
 function quote(){return QUOTES[new Date().getDate()%QUOTES.length]}
-function todayTasks(){var t=todayKey();return S.tasks.filter(function(x){return x.date===t})}
+function todayTasks(){
+  var t=todayKey();
+  return S.tasks.filter(function(x){return x.date===t})
+    .sort(function(a,b){return (a.order||0)-(b.order||0)});
+}
 function bump(delta){
   var k=todayKey();S.log[k]=Math.max(0,(S.log[k]||0)+delta);
 }
@@ -408,68 +455,63 @@ function weekDays(){
   }
   return out;
 }
+function streakCount(){
+  var n=0,d=new Date();
+  if(!(S.log[todayKey(d)]>0)) d.setDate(d.getDate()-1); // 今日はまだでも継続扱い
+  while((S.log[todayKey(d)]||0)>0){ n++; d.setDate(d.getDate()-1); }
+  return n;
+}
+function daysUntil(dateStr){
+  if(!dateStr) return null;
+  var today=new Date();today.setHours(0,0,0,0);
+  var d=new Date(dateStr+'T00:00:00');
+  return Math.round((d-today)/86400000);
+}
 
 /* ---------- 画面 ---------- */
 function heroArt(){
-  return '<div class="hero-art"><svg viewBox="0 0 400 108" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">'+
-    '<defs>'+
-      '<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">'+
-        '<stop offset="0%" stop-color="#eaf1fd"/>'+
-        '<stop offset="55%" stop-color="#fbe8ec"/>'+
-        '<stop offset="100%" stop-color="#fdf0e0"/>'+
-      '</linearGradient>'+
-      '<radialGradient id="sun" cx="50%" cy="50%" r="50%">'+
-        '<stop offset="0%" stop-color="#ffe9b8"/>'+
-        '<stop offset="55%" stop-color="#f3c377"/>'+
-        '<stop offset="100%" stop-color="#f3c377" stop-opacity="0"/>'+
-      '</radialGradient>'+
-      '<linearGradient id="m1" x1="0" y1="0" x2="0" y2="1">'+
-        '<stop offset="0%" stop-color="#a9c7ef"/><stop offset="100%" stop-color="#8fb4e4"/>'+
-      '</linearGradient>'+
-      '<linearGradient id="m2" x1="0" y1="0" x2="0" y2="1">'+
-        '<stop offset="0%" stop-color="#6ea0dd"/><stop offset="100%" stop-color="#5488cf"/>'+
-      '</linearGradient>'+
-      '<linearGradient id="m3" x1="0" y1="0" x2="0" y2="1">'+
-        '<stop offset="0%" stop-color="#3f6fb8"/><stop offset="100%" stop-color="#2f5aa0"/>'+
-      '</linearGradient>'+
-    '</defs>'+
-    '<rect width="400" height="108" fill="url(#sky)"/>'+
-    '<circle cx="200" cy="60" r="46" fill="url(#sun)"/>'+
-    '<circle cx="200" cy="60" r="16" fill="#fff3d6"/>'+
-    '<path d="M0,78 L55,38 L95,64 L140,30 L185,66 L215,44 L260,70 L300,42 L345,66 L400,48 L400,108 L0,108 Z" fill="url(#m1)" opacity="0.75"/>'+
-    '<path d="M0,92 L60,58 L110,80 L165,50 L210,82 L255,56 L300,86 L350,60 L400,80 L400,108 L0,108 Z" fill="url(#m2)" opacity="0.88"/>'+
-    '<path d="M0,108 L45,80 L90,100 L130,72 L180,102 L225,78 L270,104 L320,76 L365,100 L400,86 L400,108 Z" fill="url(#m3)"/>'+
-    '</svg></div>';
+  return '<div class="hero-art"><img src="hero.jpg" alt="" loading="lazy"></div>';
 }
 
 function viewToday(){
   var list=todayTasks();
+  var reorder=S.reorderMode&&S.filter==='all';
   var shown=S.filter==='all'?list:list.filter(function(x){return x.cat===S.filter});
   var done=list.filter(function(x){return x.done}).length;
 
   var chips='<button class="chip '+(S.filter==='all'?'on':'')+'" data-f="all">すべて</button>'+
     CATS.map(function(c){return '<button class="chip '+(S.filter===c.id?'on':'')+'" data-f="'+c.id+'">'+c.label+'</button>'}).join('');
 
-  var rows=shown.length?shown.map(function(t){
+  var rows=shown.length?shown.map(function(t,i){
     var c=cat(t.cat);
+    var right=reorder?
+      ('<div class="task-moves">'+
+        '<button class="move-btn" data-move="-1" data-movetask="'+t.id+'" '+(i===0?'disabled':'')+'>▲</button>'+
+        '<button class="move-btn" data-move="1" data-movetask="'+t.id+'" '+(i===shown.length-1?'disabled':'')+'>▼</button>'+
+      '</div>'):
+      ('<div class="mins">'+t.mins+'分</div><button class="del" data-deltask="'+t.id+'">×</button>');
     return '<div class="task '+(t.done?'done':'')+'">'+
       '<div class="tick '+(t.done?'on':'')+'" data-tick="'+t.id+'">'+(t.done?'✓':'')+'</div>'+
       '<div class="task-main"><div class="task-title">'+esc(t.title)+'</div>'+
         '<div class="task-sub"><span class="tag" style="color:'+c.c+';background:'+c.bg+'">'+c.label+'</span></div>'+
       '</div>'+
-      '<div class="mins">'+t.mins+'分</div>'+
-      '<button class="del" data-deltask="'+t.id+'">×</button>'+
+      right+
     '</div>';
   }).join(''):'<div class="empty">まだタスクがありません。<br>15分でできる一歩を追加してみよう。</div>';
 
+  var streak=streakCount();
   return '<div class="hero">'+
-      '<div class="date">'+jpDate(new Date())+'</div>'+
+      '<div class="date"><span>'+jpDate(new Date())+'</span>'+
+        (streak>0?'<span class="streak">🔥 '+streak+'日連続</span>':'')+
+      '</div>'+
       '<h1>'+greet()+'、'+esc(S.userName)+'さん!</h1>'+
       '<p>今日の一歩が、未来につながります。<br>まずは15分、やってみよう!</p>'+
       heroArt()+
       '<div class="hero-quote">"'+quote()+'"</div>'+
     '</div>'+
-    '<div class="sec-head"><span class="sec-title">今日のタスク</span><span class="sec-meta">'+done+'/'+list.length+' 完了</span></div>'+
+    '<div class="sec-head"><span class="sec-title">今日のタスク</span>'+
+      '<span class="sec-meta-row"><span class="sec-meta">'+done+'/'+list.length+' 完了</span>'+
+        '<button class="reorder-btn '+(S.reorderMode?'on':'')+'" data-reorder="1">'+(S.reorderMode?'完了':'並び替え')+'</button></span></div>'+
     '<div class="chips">'+chips+'</div>'+
     '<div class="card">'+rows+'<div class="add-row" data-new="task">＋ タスクを追加</div></div>'+
     '<div class="footer-quote">小さな一歩の積み重ねが、<br>大きな未来をつくる。</div>';
@@ -480,10 +522,12 @@ function viewGoals(){
     var gs=S.goals.filter(function(x){return x.horizon===h.id});
     if(!gs.length)return '';
     var cards=gs.map(function(go){
-      return '<div class="goal" style="background:'+h.bg+'">'+
+      return '<div class="goal '+(go.done?'goal-done':'')+'" style="background:'+h.bg+'">'+
         '<button class="goal-edit" data-editgoal="'+go.id+'">✎</button>'+
         '<div class="goal-head"><div class="goal-emoji">'+h.emoji+'</div>'+
-          '<span class="goal-when" style="color:'+h.c+'">'+h.label+'</span></div>'+
+          '<span class="goal-when" style="color:'+h.c+'">'+h.label+'</span>'+
+          '<button class="goal-check '+(go.done?'on':'')+'" data-goaldone="'+go.id+'">'+(go.done?'✓ 達成':'達成にする')+'</button>'+
+        '</div>'+
         '<div class="goal-title">'+esc(go.title)+'</div>'+
         (go.note?'<div class="goal-note">'+esc(go.note)+'</div>':'')+
       '</div>';
@@ -505,6 +549,13 @@ function viewProjects(){
     var total=p.subs.length,done=p.subs.filter(function(s){return s.done}).length;
     var pct=total?Math.round(done/total*100):0;
     var open=!!S.openProj[p.id];
+    var due=daysUntil(p.deadline);
+    var dueBadge='';
+    if(due!=null){
+      var cls=due<0?'over':due<=3?'soon':'ok';
+      var label=due<0?'期限切れ':due===0?'今日まで':'あと'+due+'日';
+      dueBadge='<span class="proj-due '+cls+'">'+label+'</span>';
+    }
     var subs=open?('<div class="subs">'+
       p.subs.map(function(s){
         return '<div class="sub '+(s.done?'done':'')+'">'+
@@ -517,7 +568,9 @@ function viewProjects(){
       '<div class="proj-head">'+
         '<div class="proj-emoji" style="background:var(--line-soft)">'+p.emoji+'</div>'+
         '<div class="proj-name">'+esc(p.name)+'</div>'+
+        dueBadge+
         '<div class="proj-pct">'+pct+'%</div>'+
+        '<button class="proj-caret" data-editproj="'+p.id+'">✎</button>'+
         '<button class="proj-caret" data-toggleproj="'+p.id+'">'+(open?'▲':'▼')+'</button>'+
       '</div>'+
       '<div class="bar"><span style="width:'+pct+'%;background:'+p.color+'"></span></div>'+
@@ -551,6 +604,14 @@ function viewReview(){
   }).join('');
 
   var msg = n===0?'まだこれから。1つでも大丈夫。':n<3?'いい調子!':'よくやった!';
+  var achieved=S.goals.filter(function(g){return g.done});
+  var achievedRows=achieved.length?achieved.map(function(g){
+    var h=hz(g.horizon);
+    return '<div class="task"><div class="tick on">✓</div><div class="task-main">'+
+      '<div class="task-title" style="color:var(--ink-2)">'+esc(g.title)+'</div>'+
+      '<div class="task-sub"><span class="tag" style="color:'+h.c+';background:'+h.bg+'">'+h.label+'</span></div>'+
+      '</div></div>';
+  }).join(''):'';
 
   return '<div class="sec-head"><span class="sec-title">できたことに目を向ける</span></div>'+
     '<div class="stat">'+
@@ -564,6 +625,10 @@ function viewReview(){
     '<div class="sec-head"><span class="sec-title">今週の進捗</span></div>'+
     '<div class="card"><div class="week">'+bars+'</div>'+
       '<div class="week-note">今週、未来へ <b>'+wsum+'</b> 歩 進みました!</div></div>'+
+    (achieved.length?(
+      '<div class="sec-head"><span class="sec-title">達成した目標</span></div>'+
+      '<div class="card">'+achievedRows+'</div>'
+    ):'')+
     '<div class="footer-quote">"続けるほど、なりたい自分に近づく。"</div>';
 }
 
@@ -595,7 +660,8 @@ function sheetHTML(){
       '</div></div>'+
       '<div class="f"><label>色</label><div class="opts">'+
         PROJ_COLORS.map(function(c,i){return '<button class="opt '+(s.color===c?'on':'')+'" data-pick="color|'+i+'" style="background:'+c+';color:#fff;border-color:'+c+';'+(s.color===c?'':'opacity:.42')+'">　</button>'}).join('')+
-      '</div></div>';
+      '</div></div>'+
+      '<div class="f"><label>期限(任意)</label><input type="date" id="i-due" value="'+(s.deadline||'')+'"></div>';
   } else if(s.type==='sub'){
     inner='<h2>ステップを追加</h2>'+
       '<div class="f"><label>内容</label><input id="i-title" value="'+att(s.title)+'" placeholder="例: セクション2を収録"><div class="err" id="e-title"></div></div>';
@@ -631,6 +697,14 @@ function render(){
 function bind(){
   q('[data-tab]',function(el){el.onclick=function(){S.tab=el.dataset.tab;S.filter='all';render()}});
   q('[data-f]',function(el){el.onclick=function(){S.filter=el.dataset.f;render()}});
+  q('[data-reorder]',function(el){el.onclick=function(){S.reorderMode=!S.reorderMode;render()}});
+  q('[data-movetask]',function(el){el.onclick=function(){
+    var list=todayTasks(),id=el.dataset.movetask,dir=parseInt(el.dataset.move,10);
+    var idx=list.findIndex(function(x){return x.id===id}),j=idx+dir;
+    if(idx<0||j<0||j>=list.length)return;
+    var tmp=list[idx].order; list[idx].order=list[j].order; list[j].order=tmp;
+    save();render();
+  }});
 
   q('[data-tick]',function(el){el.onclick=function(){
     var t=find(S.tasks,el.dataset.tick); if(!t)return;
@@ -660,12 +734,21 @@ function bind(){
     var go=find(S.goals,el.dataset.editgoal);if(!go)return;
     S.sheet={type:'goal',id:go.id,title:go.title,note:go.note||'',horizon:go.horizon};render();
   }});
+  q('[data-goaldone]',function(el){el.onclick=function(e){
+    e.stopPropagation();
+    var go=find(S.goals,el.dataset.goaldone);if(!go)return;
+    go.done=!go.done;save();render();
+  }});
+  q('[data-editproj]',function(el){el.onclick=function(){
+    var p=find(S.projects,el.dataset.editproj);if(!p)return;
+    S.sheet={type:'proj',id:p.id,title:p.name,emoji:p.emoji,color:p.color,deadline:p.deadline||''};render();
+  }});
 
   q('[data-new]',function(el){el.onclick=function(){
     var k=el.dataset.new;
     if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15};
     if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week'};
-    if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0]};
+    if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
     render();
   }});
 
@@ -689,8 +772,8 @@ function bind(){
 function q(sel,fn){Array.prototype.forEach.call(document.querySelectorAll(sel),fn)}
 function find(arr,id){for(var i=0;i<arr.length;i++)if(arr[i].id===id)return arr[i];return null}
 function keepInput(){
-  var t=document.getElementById('i-title'),n=document.getElementById('i-note');
-  if(t)S.sheet.title=t.value; if(n)S.sheet.note=n.value;
+  var t=document.getElementById('i-title'),n=document.getElementById('i-note'),d=document.getElementById('i-due');
+  if(t)S.sheet.title=t.value; if(n)S.sheet.note=n.value; if(d)S.sheet.deadline=d.value;
 }
 
 function submit(){
@@ -700,15 +783,15 @@ function submit(){
 
   if(s.type==='task'){
     if(s.id){var t=find(S.tasks,s.id);t.title=title;t.cat=s.cat;t.mins=s.mins}
-    else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey()});
+    else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey(),order:Date.now()});
   }
   if(s.type==='goal'){
     if(s.id){var go=find(S.goals,s.id);go.title=title;go.note=(s.note||'').trim();go.horizon=s.horizon}
     else S.goals.push({id:g(),horizon:s.horizon,title:title,note:(s.note||'').trim()});
   }
   if(s.type==='proj'){
-    if(s.id){var p=find(S.projects,s.id);p.name=title;p.emoji=s.emoji;p.color=s.color}
-    else S.projects.push({id:g(),name:title,emoji:s.emoji,color:s.color,subs:[]});
+    if(s.id){var p=find(S.projects,s.id);p.name=title;p.emoji=s.emoji;p.color=s.color;p.deadline=s.deadline||''}
+    else S.projects.push({id:g(),name:title,emoji:s.emoji,color:s.color,subs:[],deadline:s.deadline||''});
   }
   if(s.type==='sub'){
     var pr=find(S.projects,s.projId);

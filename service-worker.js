@@ -1,10 +1,12 @@
-const CACHE_NAME = 'mirastep-v1';
+const CACHE_NAME = 'mirastep-v2';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './apple-touch-icon.png',
+  './hero.jpg'
 ];
 
 self.addEventListener('install', (event) => {
