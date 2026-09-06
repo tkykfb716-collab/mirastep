@@ -177,6 +177,16 @@ body{
   color:var(--ink-2);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;
   font-family:inherit;flex-shrink:0;
 }
+.theme-card{
+  background:linear-gradient(135deg,#f4f0fb,#fdf3ea);border-radius:16px;
+  padding:14px 16px;margin-bottom:10px;cursor:pointer;
+}
+.theme-head{
+  font-size:12.5px;font-weight:700;color:#6b5aa8;display:flex;align-items:center;gap:6px;margin-bottom:6px;
+}
+.theme-edit{margin-left:auto;color:rgba(0,0,0,.3);font-size:12px}
+.theme-text{font-size:13.5px;color:#3f4a5e;line-height:1.7;white-space:pre-wrap}
+.theme-card.empty .theme-empty{font-size:12.5px;color:#8b7ad4}
 .goal-emoji{
   width:30px;height:30px;border-radius:10px;background:rgba(255,255,255,.75);
   display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;
@@ -342,7 +352,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{}};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -376,11 +386,12 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes});
 }
 function apply(str){
   var d=JSON.parse(str);
   S.tasks=d.tasks||[];S.goals=d.goals||[];S.projects=d.projects||[];S.log=d.log||{};
+  S.weekNotes=d.weekNotes||{};
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -607,6 +618,22 @@ function migrateGoalPeriods(){
   });
 }
 
+function weekThemeCard(){
+  var wk=currentWeekPeriod().monday;
+  var text=S.weekNotes[wk]||'';
+  var label=weekPeriodLabel(currentWeekPeriod());
+  if(!text){
+    return '<div class="theme-card empty" data-editweektheme="1">'+
+      '<div class="theme-head">🧭 今週のテーマ <span class="goal-period">('+label+')</span></div>'+
+      '<div class="theme-empty">＋ 会議で決めた方針をメモする</div>'+
+    '</div>';
+  }
+  return '<div class="theme-card" data-editweektheme="1">'+
+    '<div class="theme-head">🧭 今週のテーマ <span class="goal-period">('+label+')</span><span class="theme-edit">✎</span></div>'+
+    '<div class="theme-text">'+esc(text).replace(/\n/g,'<br>')+'</div>'+
+  '</div>';
+}
+
 /* ---------- 画面 ---------- */
 function viewToday(){
   var list=todayTasks();
@@ -653,8 +680,10 @@ function viewToday(){
 
 function viewGoals(){
   var body=HORIZONS.map(function(h,i){
+    var themeCard='';
+    if(h.id==='week') themeCard=weekThemeCard();
     var gs=S.goals.filter(function(x){return x.horizon===h.id&&!x.done});
-    if(!gs.length)return '';
+    if(!gs.length)return themeCard+(themeCard&&i<HORIZONS.length-1?'<div class="ladder-arrow">▾</div>':'');
     if(h.id==='month'||h.id==='week'){
       gs=gs.slice().sort(function(a,b){return periodSortKey(a)>periodSortKey(b)?1:-1;});
     }
@@ -677,7 +706,7 @@ function viewGoals(){
         '<button class="goal-check" data-goaldone="'+go.id+'" style="margin-top:8px">達成にする</button>'+
       '</div>';
     }).join('<div style="height:8px"></div>');
-    return cards+(i<HORIZONS.length-1?'<div class="ladder-arrow">▾</div>':'');
+    return themeCard+cards+(i<HORIZONS.length-1?'<div class="ladder-arrow">▾</div>':'');
   }).join('');
 
   var hasActive=S.goals.some(function(x){return !x.done});
@@ -875,12 +904,16 @@ function sheetHTML(){
   } else if(s.type==='sub'){
     inner='<h2>ステップを追加</h2>'+
       '<div class="f"><label>内容</label><input id="i-title" value="'+att(s.title)+'" placeholder="例: セクション2を収録"><div class="err" id="e-title"></div></div>';
+  } else if(s.type==='weektheme'){
+    inner='<h2>今週のテーマ</h2>'+
+      '<div class="f"><label>方針・テーマ('+weekPeriodLabel(currentWeekPeriod())+')</label>'+
+      '<textarea id="i-title" placeholder="例: 今週は、お金を追わない。教える・伝える・届けることに集中する。" style="min-height:110px">'+esc(s.title)+'</textarea></div>';
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
-      (s.id&&s.type!=='sub'?'<button class="btn dan" id="b-del">削除</button>':'')+
+      ((s.id&&s.type!=='sub')||(s.type==='weektheme'&&s.existing)?'<button class="btn dan" id="b-del">削除</button>':'')+
       '<button class="btn" id="b-cancel">キャンセル</button>'+
-      '<button class="btn pri" id="b-ok">'+(s.id?'保存':'追加')+'</button>'+
+      '<button class="btn pri" id="b-ok">'+(s.type==='weektheme'?'保存':(s.id?'保存':'追加'))+'</button>'+
     '</div></div></div>';
 }
 
@@ -940,6 +973,11 @@ function bind(){
   }});
   q('[data-newsub]',function(el){el.onclick=function(){
     S.sheet={type:'sub',id:null,projId:el.dataset.newsub,title:''};render();
+  }});
+  q('[data-editweektheme]',function(el){el.onclick=function(){
+    var wk=currentWeekPeriod().monday;
+    var existing=S.weekNotes[wk]||'';
+    S.sheet={type:'weektheme',title:existing,existing:!!existing};render();
   }});
   q('[data-subreorder]',function(el){el.onclick=function(){
     var id=el.dataset.subreorder;S.subReorder[id]=!S.subReorder[id];render();
@@ -1016,7 +1054,13 @@ function keepInput(){
 
 function submit(){
   keepInput();
-  var s=S.sheet,title=(s.title||'').trim();
+  var s=S.sheet;
+  if(s.type==='weektheme'){
+    var wk=currentWeekPeriod().monday,val=(s.title||'').trim();
+    if(val) S.weekNotes[wk]=val; else delete S.weekNotes[wk];
+    S.sheet=null;save();render();return;
+  }
+  var title=(s.title||'').trim();
   if(!title){var e=document.getElementById('e-title');if(e)e.textContent='入力してください';return}
 
   if(s.type==='task'){
@@ -1042,6 +1086,7 @@ function doDelete(){
   if(s.type==='task')S.tasks=S.tasks.filter(function(x){return x.id!==s.id});
   if(s.type==='goal')S.goals=S.goals.filter(function(x){return x.id!==s.id});
   if(s.type==='proj')S.projects=S.projects.filter(function(x){return x.id!==s.id});
+  if(s.type==='weektheme')delete S.weekNotes[currentWeekPeriod().monday];
   S.sheet=null;save();render();
 }
 
