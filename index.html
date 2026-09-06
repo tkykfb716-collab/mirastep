@@ -139,7 +139,7 @@ body{
   color:#fff;font-size:12px;line-height:1;transition:.15s;
 }
 .tick.on{background:var(--green);border-color:var(--green)}
-.task-main{flex:1;min-width:0}
+.task-main{flex:1;min-width:0;cursor:pointer}
 .task-title{font-size:14px;line-height:1.5;word-break:break-word}
 .task.done .task-title{color:var(--ink-3);text-decoration:line-through}
 .task-sub{display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap}
@@ -658,6 +658,12 @@ function viewToday(){
 
   var rows=shown.length?shown.map(function(t,i){
     var c=cat(t.cat);
+    var due=daysUntil(t.dueDate),dueBadge='';
+    if(due!=null){
+      var cls=due<0?'over':due<=1?'soon':'ok';
+      var label=due<0?'期限切れ':due===0?'今日まで':'あと'+due+'日';
+      dueBadge='<span class="proj-due '+cls+'">'+label+'</span>';
+    }
     var right=reorder?
       ('<div class="task-moves">'+
         '<button class="move-btn" data-move="-1" data-movetask="'+t.id+'" '+(i===0?'disabled':'')+'>▲</button>'+
@@ -666,8 +672,8 @@ function viewToday(){
       ('<div class="mins">'+t.mins+'分</div><button class="del" data-deltask="'+t.id+'">×</button>');
     return '<div class="task '+(t.done?'done':'')+'">'+
       '<div class="tick '+(t.done?'on':'')+'" data-tick="'+t.id+'">'+(t.done?'✓':'')+'</div>'+
-      '<div class="task-main"><div class="task-title">'+esc(t.title)+'</div>'+
-        '<div class="task-sub"><span class="tag" style="color:'+c.c+';background:'+c.bg+'">'+c.label+'</span></div>'+
+      '<div class="task-main" data-edittask="'+t.id+'"><div class="task-title">'+esc(t.title)+'</div>'+
+        '<div class="task-sub"><span class="tag" style="color:'+c.c+';background:'+c.bg+'">'+c.label+'</span>'+dueBadge+'</div>'+
       '</div>'+
       right+
     '</div>';
@@ -882,7 +888,8 @@ function sheetHTML(){
       '</div></div>'+
       '<div class="f"><label>時間</label><div class="opts">'+
         [5,15,30,60].map(function(m){return '<button class="opt '+(s.mins===m?'on':'')+'" data-pick="mins|'+m+'" style="'+(s.mins===m?'color:var(--blue);background:var(--blue-soft)':'')+'">'+m+'分</button>'}).join('')+
-      '</div></div>';
+      '</div></div>'+
+      '<div class="f"><label>期限(任意)</label><input type="date" id="i-due" value="'+(s.deadline||'')+'"></div>';
   } else if(s.type==='goal'){
     var periodRow='';
     if(s.horizon==='month'&&s.period){
@@ -971,6 +978,10 @@ function bind(){
     if(t&&t.done)bump(-1);
     S.tasks=S.tasks.filter(function(x){return x.id!==el.dataset.deltask});save();render();
   }});
+  q('[data-edittask]',function(el){el.onclick=function(){
+    var t=find(S.tasks,el.dataset.edittask);if(!t)return;
+    S.sheet={type:'task',id:t.id,title:t.title,cat:t.cat,mins:t.mins,deadline:t.dueDate||''};render();
+  }});
 
   q('[data-toggleproj]',function(el){el.onclick=function(){
     var id=el.dataset.toggleproj;S.openProj[id]=!S.openProj[id];render();
@@ -1021,7 +1032,7 @@ function bind(){
 
   q('[data-new]',function(el){el.onclick=function(){
     var k=el.dataset.new;
-    if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15};
+    if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15,deadline:''};
     if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week',period:currentWeekPeriod()};
     if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
     render();
@@ -1076,8 +1087,8 @@ function submit(){
   if(!title){var e=document.getElementById('e-title');if(e)e.textContent='入力してください';return}
 
   if(s.type==='task'){
-    if(s.id){var t=find(S.tasks,s.id);t.title=title;t.cat=s.cat;t.mins=s.mins}
-    else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey(),order:Date.now()});
+    if(s.id){var t=find(S.tasks,s.id);t.title=title;t.cat=s.cat;t.mins=s.mins;t.dueDate=s.deadline||''}
+    else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey(),order:Date.now(),dueDate:s.deadline||''});
   }
   if(s.type==='goal'){
     if(s.id){var go=find(S.goals,s.id);go.title=title;go.note=(s.note||'').trim();go.horizon=s.horizon;go.period=s.period||null}
