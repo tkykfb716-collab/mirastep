@@ -125,6 +125,11 @@ body{
   font-family:inherit;cursor:pointer;font-weight:500;
 }
 .chip.on{background:var(--blue);border-color:var(--blue);color:#fff}
+.cat-edit-chip{color:var(--ink-3);border-style:dashed}
+.cat-row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line-soft)}
+.cat-row:last-child{border-bottom:none}
+.cat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.cat-row-label{flex:1;font-size:13.5px}
 
 /* task row */
 .task{
@@ -327,12 +332,20 @@ var TABS=[
   {id:'projects',name:'プロジェクト',ic:'📁',head:'プロジェクト'},
   {id:'review',name:'振り返り',ic:'📊',head:'振り返り'}
 ];
-var CATS=[
+var DEFAULT_CATS=[
   {id:'work',   label:'仕事',    c:'var(--blue)',  bg:'var(--blue-soft)'},
   {id:'seo',    label:'SEO',     c:'var(--teal)',  bg:'var(--teal-soft)'},
   {id:'post',   label:'発信',    c:'var(--pink)',  bg:'var(--pink-soft)'},
   {id:'learn',  label:'学び',    c:'var(--purple)',bg:'var(--purple-soft)'},
   {id:'habit',  label:'習慣',    c:'var(--amber)', bg:'var(--amber-soft)'}
+];
+var CAT_PALETTE=[
+  {c:'var(--blue)',bg:'var(--blue-soft)'},
+  {c:'var(--teal)',bg:'var(--teal-soft)'},
+  {c:'var(--pink)',bg:'var(--pink-soft)'},
+  {c:'var(--purple)',bg:'var(--purple-soft)'},
+  {c:'var(--amber)',bg:'var(--amber-soft)'},
+  {c:'var(--green)',bg:'var(--green-soft)'}
 ];
 var HORIZONS=[
   {id:'future',label:'未来',emoji:'⛰️',c:'var(--pink)',  bg:'var(--pink-soft)'},
@@ -359,7 +372,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)]};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -393,12 +406,13 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats});
 }
 function apply(str){
   var d=JSON.parse(str);
   S.tasks=d.tasks||[];S.goals=d.goals||[];S.projects=d.projects||[];S.log=d.log||{};
   S.weekNotes=d.weekNotes||{};
+  S.cats=(d.cats&&d.cats.length)?d.cats:DEFAULT_CATS.slice();
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -522,7 +536,7 @@ function rollTasks(){
 /* ---------- ヘルパ ---------- */
 function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
 function att(s){return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
-function cat(id){for(var i=0;i<CATS.length;i++)if(CATS[i].id===id)return CATS[i];return CATS[0]}
+function cat(id){for(var i=0;i<S.cats.length;i++)if(S.cats[i].id===id)return S.cats[i];return S.cats[0]}
 function hz(id){for(var i=0;i<HORIZONS.length;i++)if(HORIZONS[i].id===id)return HORIZONS[i];return HORIZONS[0]}
 function jpDate(d){
   var w=['日','月','火','水','木','金','土'][d.getDay()];
@@ -654,7 +668,21 @@ function viewToday(){
   var done=list.filter(function(x){return x.done}).length;
 
   var chips='<button class="chip '+(S.filter==='all'?'on':'')+'" data-f="all">すべて</button>'+
-    CATS.map(function(c){return '<button class="chip '+(S.filter===c.id?'on':'')+'" data-f="'+c.id+'">'+c.label+'</button>'}).join('');
+    S.cats.map(function(c){return '<button class="chip '+(S.filter===c.id?'on':'')+'" data-f="'+c.id+'">'+c.label+'</button>'}).join('')+
+    '<button class="chip cat-edit-chip" data-catedit="1">'+(S.catEditMode?'✓ 完了':'✎ 編集')+'</button>';
+
+  var catPanel='';
+  if(S.catEditMode){
+    var catRows=S.cats.map(function(c){
+      return '<div class="cat-row">'+
+        '<span class="cat-dot" style="background:'+c.c+'"></span>'+
+        '<span class="cat-row-label">'+esc(c.label)+'</span>'+
+        '<button class="del" data-delcat="'+c.id+'">×</button>'+
+      '</div>';
+    }).join('');
+    catPanel='<div class="card" style="margin-bottom:12px">'+catRows+
+      '<div class="add-row" data-new="cat">＋ カテゴリを追加</div></div>';
+  }
 
   var rows=shown.length?shown.map(function(t,i){
     var c=cat(t.cat);
@@ -692,6 +720,7 @@ function viewToday(){
       '<span class="sec-meta-row"><span class="sec-meta">'+done+'/'+list.length+' 完了</span>'+
         '<button class="reorder-btn '+(S.reorderMode?'on':'')+'" data-reorder="1">'+(S.reorderMode?'完了':'並び替え')+'</button></span></div>'+
     '<div class="chips">'+chips+'</div>'+
+    catPanel+
     '<div class="card">'+rows+'<div class="add-row" data-new="task">＋ タスクを追加</div></div>'+
     '<div class="footer-quote">小さな一歩の積み重ねが、<br>大きな未来をつくる。</div>';
 }
@@ -884,7 +913,7 @@ function sheetHTML(){
     inner='<h2>'+(s.id?'タスクを編集':'今日の一歩を追加')+'</h2>'+
       '<div class="f"><label>やること</label><input id="i-title" value="'+att(s.title)+'" placeholder="例: 講座のスライドを1枚つくる"><div class="err" id="e-title"></div></div>'+
       '<div class="f"><label>カテゴリ</label><div class="opts">'+
-        CATS.map(function(c){return '<button class="opt '+(s.cat===c.id?'on':'')+'" data-pick="cat|'+c.id+'" style="color:'+c.c+';'+(s.cat===c.id?'background:'+c.bg:'')+'">'+c.label+'</button>'}).join('')+
+        S.cats.map(function(c){return '<button class="opt '+(s.cat===c.id?'on':'')+'" data-pick="cat|'+c.id+'" style="color:'+c.c+';'+(s.cat===c.id?'background:'+c.bg:'')+'">'+c.label+'</button>'}).join('')+
       '</div></div>'+
       '<div class="f"><label>時間</label><div class="opts">'+
         [5,15,30,60].map(function(m){return '<button class="opt '+(s.mins===m?'on':'')+'" data-pick="mins|'+m+'" style="'+(s.mins===m?'color:var(--blue);background:var(--blue-soft)':'')+'">'+m+'分</button>'}).join('')+
@@ -927,6 +956,12 @@ function sheetHTML(){
     inner='<h2>今週のテーマ</h2>'+
       '<div class="f"><label>方針・テーマ('+weekPeriodLabel(currentWeekPeriod())+')</label>'+
       '<textarea id="i-title" placeholder="例: 今週は、お金を追わない。教える・伝える・届けることに集中する。" style="min-height:110px">'+esc(s.title)+'</textarea></div>';
+  } else if(s.type==='cat'){
+    inner='<h2>カテゴリを追加</h2>'+
+      '<div class="f"><label>名前</label><input id="i-title" value="'+att(s.title)+'" placeholder="例: 家事"><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>色</label><div class="opts">'+
+        CAT_PALETTE.map(function(p,i){return '<button type="button" class="opt '+(s.colorIdx===i?'on':'')+'" data-pick="coloridx|'+i+'" style="background:'+p.c+';color:#fff;border-color:'+p.c+';'+(s.colorIdx===i?'':'opacity:.42')+'">　</button>'}).join('')+
+      '</div></div>';
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
@@ -961,6 +996,14 @@ function bind(){
   q('[data-tab]',function(el){el.onclick=function(){S.tab=el.dataset.tab;S.filter='all';render()}});
   q('[data-f]',function(el){el.onclick=function(){S.filter=el.dataset.f;render()}});
   q('[data-reorder]',function(el){el.onclick=function(){S.reorderMode=!S.reorderMode;render()}});
+  q('[data-catedit]',function(el){el.onclick=function(){S.catEditMode=!S.catEditMode;render()}});
+  q('[data-delcat]',function(el){el.onclick=function(){
+    var id=el.dataset.delcat;
+    if(S.cats.length<=1)return;
+    S.cats=S.cats.filter(function(c){return c.id!==id});
+    if(S.filter===id)S.filter='all';
+    save();render();
+  }});
   q('[data-movetask]',function(el){el.onclick=function(){
     var list=todayTasks(),id=el.dataset.movetask,dir=parseInt(el.dataset.move,10);
     var idx=list.findIndex(function(x){return x.id===id}),j=idx+dir;
@@ -1035,6 +1078,7 @@ function bind(){
     if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15,deadline:''};
     if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week',period:currentWeekPeriod()};
     if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
+    if(k==='cat')S.sheet={type:'cat',id:null,title:'',colorIdx:S.cats.length%CAT_PALETTE.length};
     render();
   }});
 
@@ -1043,6 +1087,7 @@ function bind(){
     keepInput();
     if(p[0]==='mins')S.sheet.mins=parseInt(p[1],10);
     else if(p[0]==='color')S.sheet.color=PROJ_COLORS[parseInt(p[1],10)];
+    else if(p[0]==='coloridx')S.sheet.colorIdx=parseInt(p[1],10);
     else if(p[0]==='horizon'){
       S.sheet.horizon=p[1];
       if(p[1]==='month') S.sheet.period=currentMonthPeriod();
@@ -1101,6 +1146,10 @@ function submit(){
   if(s.type==='sub'){
     var pr=find(S.projects,s.projId);
     if(pr){pr.subs.push({id:g(),title:title,done:false});S.openProj[pr.id]=true}
+  }
+  if(s.type==='cat'){
+    var pal=CAT_PALETTE[s.colorIdx||0];
+    S.cats.push({id:'c'+g(),label:title,c:pal.c,bg:pal.bg});
   }
   S.sheet=null;save();render();
 }
