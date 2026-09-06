@@ -348,11 +348,18 @@ var QUOTES=[
   '未来は、今この瞬間の選択でつくられる。',
   '続けるほど、なりたい自分に近づく。',
   'できる、きっとできる。',
-  '今日の一歩が、未来をつくる。'
+  '今日の一歩が、未来をつくる。',
+  '完璧より、まず一歩。',
+  '積み重ねた15分が、明日を変える。',
+  '迷ったら、未来の自分に聞いてみる。',
+  '今日できたことに、目を向けよう。',
+  '昨日の自分より、少し前へ。',
+  'やるか、やりたい未来に近づくか。',
+  '一歩ずつでいい、止まらなければ。'
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{}};
+var S={tab:'today',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)]};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -522,7 +529,12 @@ function jpDate(d){
   return d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日('+w+')';
 }
 function greet(){var h=new Date().getHours();return h<11?'おはよう':h<18?'こんにちは':'おつかれさま'}
-function quote(){return QUOTES[new Date().getDate()%QUOTES.length]}
+function quote(){
+  var d=new Date();
+  var start=new Date(d.getFullYear(),0,0);
+  var dayOfYear=Math.floor((d-start)/86400000);
+  return QUOTES[dayOfYear%QUOTES.length];
+}
 function todayTasks(){
   var t=todayKey();
   return S.tasks.filter(function(x){return x.date===t})
