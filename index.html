@@ -173,6 +173,7 @@ body{
 .task.done .task-title{color:var(--ink-3);text-decoration:line-through}
 .task-sub{display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap}
 .tag{font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:500}
+.repeat-badge{font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:500;color:var(--blue);background:var(--blue-soft)}
 .mins{font-size:11px;color:var(--ink-3);flex-shrink:0;margin-top:2px}
 .del{
   background:none;border:none;color:var(--ink-3);font-size:15px;
@@ -369,17 +370,6 @@ body{
   padding:7px 13px;font-size:12px;font-family:inherit;cursor:pointer;color:var(--ink-2);
 }
 .opt.on{border-color:currentColor;font-weight:500}
-.repeat-toggle{
-  width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;
-  border:1px solid var(--line);border-radius:11px;background:#fbfcfe;cursor:pointer;
-  font-family:inherit;font-size:13.5px;color:var(--ink-2);
-}
-.repeat-toggle.on{border-color:var(--blue);background:var(--blue-soft);color:var(--blue);font-weight:500}
-.rt-check{
-  width:18px;height:18px;border-radius:6px;border:1.6px solid #cdd4e0;background:#fff;
-  flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;
-}
-.repeat-toggle.on .rt-check{background:var(--blue);border-color:var(--blue)}
 .acts{display:flex;gap:8px;margin-top:18px}
 .btn{
   flex:1;padding:13px;border-radius:12px;font-size:14px;font-family:inherit;
@@ -612,12 +602,27 @@ function seed(){
 }
 function g(){return 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 
-/* 前日以前の未完タスクを今日に繰り越し。毎日繰り返しタスクは完了済みでも今日分としてリセット */
+/* 前日以前の未完タスクを今日に繰り越し。繰り返し設定があれば、該当する周期の日にだけ今日分として復活させる */
 function rollTasks(){
-  var t=todayKey(),ch=false;
+  var t=todayKey(),ch=false,now=new Date();
   S.tasks.forEach(function(x){
-    if(x.repeat==='daily'&&x.date&&x.date<t){x.date=t;x.done=false;ch=true}
-    else if(!x.done&&x.date&&x.date<t){x.date=t;ch=true}
+    if(!x.date||x.date>=t) return;
+    if(x.repeat==='daily'){
+      x.date=t;x.done=false;ch=true;
+    }else if(x.repeat==='weekly'){
+      var ref=new Date(x.date+'T00:00:00');
+      if(now.getDay()===ref.getDay()){ x.date=t;x.done=false;ch=true; }
+    }else if(x.repeat==='monthly'){
+      var ref2=new Date(x.date+'T00:00:00');
+      var targetDate=ref2.getDate();
+      var todayDate=now.getDate();
+      var lastDayThisMonth=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+      if(todayDate===targetDate||(todayDate===lastDayThisMonth&&targetDate>lastDayThisMonth)){
+        x.date=t;x.done=false;ch=true;
+      }
+    }else if(!x.done){
+      x.date=t;ch=true;
+    }
   });
   if(ch)save();
 }
@@ -861,11 +866,13 @@ function viewToday(){
   var rows=shown.length?shown.map(function(t,i){
     var c=cat(t.cat);
     var due=daysUntil(t.dueDate),dueBadge='';
-    if(due!=null&&!t.done&&t.repeat!=='daily'){
+    if(due!=null&&!t.done&&!t.repeat){
       var cls=due<0?'over':due<=1?'soon':'ok';
       var label=due<0?'期限切れ':due===0?'今日まで':'あと'+due+'日';
       dueBadge='<span class="proj-due '+cls+'">'+label+'</span>';
     }
+    var repeatLabels={daily:'🔁 毎日',weekly:'🔁 毎週',monthly:'🔁 毎月'};
+    var repeatBadge=t.repeat&&repeatLabels[t.repeat]?'<span class="repeat-badge">'+repeatLabels[t.repeat]+'</span>':'';
     var right=reorder?
       ('<div class="task-moves">'+
         '<button class="move-btn" data-move="-1" data-movetask="'+t.id+'" '+(i===0?'disabled':'')+'>▲</button>'+
@@ -874,8 +881,8 @@ function viewToday(){
       ('<div class="mins">'+t.mins+'分</div><button class="del" data-deltask="'+t.id+'">×</button>');
     return '<div class="task '+(t.done?'done':'')+'">'+
       '<div class="tick '+(t.done?'on':'')+'" data-tick="'+t.id+'">'+(t.done?'✓':'')+'</div>'+
-      '<div class="task-main" data-edittask="'+t.id+'"><div class="task-title">'+(t.repeat==='daily'?'🔁 ':'')+esc(t.title)+'</div>'+
-        '<div class="task-sub"><span class="tag" style="color:'+c.c+';background:'+c.bg+'">'+c.label+'</span>'+dueBadge+'</div>'+
+      '<div class="task-main" data-edittask="'+t.id+'"><div class="task-title">'+esc(t.title)+'</div>'+
+        '<div class="task-sub"><span class="tag" style="color:'+c.c+';background:'+c.bg+'">'+c.label+'</span>'+repeatBadge+dueBadge+'</div>'+
       '</div>'+
       right+
     '</div>';
@@ -1095,10 +1102,11 @@ function sheetHTML(){
         [5,15,30,60].map(function(m){return '<button class="opt '+(s.mins===m?'on':'')+'" data-pick="mins|'+m+'" style="'+(s.mins===m?'color:var(--blue);background:var(--blue-soft)':'')+'">'+m+'分</button>'}).join('')+
       '</div></div>'+
       '<div class="f"><label>期限(任意)</label><input type="date" id="i-due" value="'+(s.deadline||'')+'"></div>'+
-      '<div class="f"><button type="button" class="repeat-toggle '+(s.repeat==='daily'?'on':'')+'" data-pick="repeat|'+(s.repeat==='daily'?'':'daily')+'">'+
-        '<span class="rt-check">'+(s.repeat==='daily'?'✓':'')+'</span>'+
-        '<span>🔁 毎日繰り返す</span>'+
-      '</button></div>';
+      '<div class="f"><label>繰り返し</label><div class="opts">'+
+        [{id:'',label:'しない'},{id:'daily',label:'🔁 毎日'},{id:'weekly',label:'🔁 毎週'},{id:'monthly',label:'🔁 毎月'}].map(function(r){
+          return '<button class="opt '+(s.repeat===r.id?'on':'')+'" data-pick="repeat|'+r.id+'" style="'+(s.repeat===r.id?'color:var(--blue);background:var(--blue-soft)':'')+'">'+r.label+'</button>';
+        }).join('')+
+      '</div></div>';
   } else if(s.type==='goal'){
     var periodRow='';
     if(s.horizon==='month'&&s.period){
