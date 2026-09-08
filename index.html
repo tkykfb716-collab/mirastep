@@ -369,6 +369,17 @@ body{
   padding:7px 13px;font-size:12px;font-family:inherit;cursor:pointer;color:var(--ink-2);
 }
 .opt.on{border-color:currentColor;font-weight:500}
+.repeat-toggle{
+  width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;
+  border:1px solid var(--line);border-radius:11px;background:#fbfcfe;cursor:pointer;
+  font-family:inherit;font-size:13.5px;color:var(--ink-2);
+}
+.repeat-toggle.on{border-color:var(--blue);background:var(--blue-soft);color:var(--blue);font-weight:500}
+.rt-check{
+  width:18px;height:18px;border-radius:6px;border:1.6px solid #cdd4e0;background:#fff;
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;
+}
+.repeat-toggle.on .rt-check{background:var(--blue);border-color:var(--blue)}
 .acts{display:flex;gap:8px;margin-top:18px}
 .btn{
   flex:1;padding:13px;border-radius:12px;font-size:14px;font-family:inherit;
@@ -598,10 +609,13 @@ function seed(){
 }
 function g(){return 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 
-/* 前日以前の未完タスクを今日に繰り越し */
+/* 前日以前の未完タスクを今日に繰り越し。毎日繰り返しタスクは完了済みでも今日分としてリセット */
 function rollTasks(){
   var t=todayKey(),ch=false;
-  S.tasks.forEach(function(x){ if(!x.done&&x.date&&x.date<t){x.date=t;ch=true} });
+  S.tasks.forEach(function(x){
+    if(x.repeat==='daily'&&x.date&&x.date<t){x.date=t;x.done=false;ch=true}
+    else if(!x.done&&x.date&&x.date<t){x.date=t;ch=true}
+  });
   if(ch)save();
 }
 
@@ -857,7 +871,7 @@ function viewToday(){
       ('<div class="mins">'+t.mins+'分</div><button class="del" data-deltask="'+t.id+'">×</button>');
     return '<div class="task '+(t.done?'done':'')+'">'+
       '<div class="tick '+(t.done?'on':'')+'" data-tick="'+t.id+'">'+(t.done?'✓':'')+'</div>'+
-      '<div class="task-main" data-edittask="'+t.id+'"><div class="task-title">'+esc(t.title)+'</div>'+
+      '<div class="task-main" data-edittask="'+t.id+'"><div class="task-title">'+(t.repeat==='daily'?'🔁 ':'')+esc(t.title)+'</div>'+
         '<div class="task-sub"><span class="tag" style="color:'+c.c+';background:'+c.bg+'">'+c.label+'</span>'+dueBadge+'</div>'+
       '</div>'+
       right+
@@ -1077,7 +1091,11 @@ function sheetHTML(){
       '<div class="f"><label>時間</label><div class="opts">'+
         [5,15,30,60].map(function(m){return '<button class="opt '+(s.mins===m?'on':'')+'" data-pick="mins|'+m+'" style="'+(s.mins===m?'color:var(--blue);background:var(--blue-soft)':'')+'">'+m+'分</button>'}).join('')+
       '</div></div>'+
-      '<div class="f"><label>期限(任意)</label><input type="date" id="i-due" value="'+(s.deadline||'')+'"></div>';
+      '<div class="f"><label>期限(任意)</label><input type="date" id="i-due" value="'+(s.deadline||'')+'"></div>'+
+      '<div class="f"><button type="button" class="repeat-toggle '+(s.repeat==='daily'?'on':'')+'" data-pick="repeat|'+(s.repeat==='daily'?'':'daily')+'">'+
+        '<span class="rt-check">'+(s.repeat==='daily'?'✓':'')+'</span>'+
+        '<span>🔁 毎日繰り返す</span>'+
+      '</button></div>';
   } else if(s.type==='goal'){
     var periodRow='';
     if(s.horizon==='month'&&s.period){
@@ -1224,7 +1242,7 @@ function bind(){
   }});
   q('[data-edittask]',function(el){el.onclick=function(){
     var t=find(S.tasks,el.dataset.edittask);if(!t)return;
-    S.sheet={type:'task',id:t.id,title:t.title,cat:t.cat,mins:t.mins,deadline:t.dueDate||''};render();
+    S.sheet={type:'task',id:t.id,title:t.title,cat:t.cat,mins:t.mins,deadline:t.dueDate||'',repeat:t.repeat||''};render();
   }});
 
   q('[data-toggleproj]',function(el){el.onclick=function(){
@@ -1276,7 +1294,7 @@ function bind(){
 
   q('[data-new]',function(el){el.onclick=function(){
     var k=el.dataset.new;
-    if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15,deadline:''};
+    if(k==='task')S.sheet={type:'task',id:null,title:'',cat:'work',mins:15,deadline:'',repeat:''};
     if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week',period:currentWeekPeriod()};
     if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
     if(k==='cat')S.sheet={type:'cat',id:null,title:'',colorIdx:S.cats.length%CAT_PALETTE.length};
@@ -1333,8 +1351,8 @@ function submit(){
   if(!title){var e=document.getElementById('e-title');if(e)e.textContent='入力してください';return}
 
   if(s.type==='task'){
-    if(s.id){var t=find(S.tasks,s.id);t.title=title;t.cat=s.cat;t.mins=s.mins;t.dueDate=s.deadline||''}
-    else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey(),order:Date.now(),dueDate:s.deadline||''});
+    if(s.id){var t=find(S.tasks,s.id);t.title=title;t.cat=s.cat;t.mins=s.mins;t.dueDate=s.deadline||'';t.repeat=s.repeat||''}
+    else S.tasks.push({id:g(),title:title,cat:s.cat,mins:s.mins,done:false,date:todayKey(),order:Date.now(),dueDate:s.deadline||'',repeat:s.repeat||''});
   }
   if(s.type==='goal'){
     if(s.id){var go=find(S.goals,s.id);go.title=title;go.note=(s.note||'').trim();go.horizon=s.horizon;go.period=s.period||null}
