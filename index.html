@@ -511,9 +511,35 @@ async function load(){
   }
   if(!got) seed();
   migrateGoalPeriods();
-  rollTasks();
+  render(); // まず今わかっている状態を即表示(オフラインでもここまでは動く)
+
+  var remoteExisted=await reconcileCloud(); // クラウドの方が新しければ、繰り越し処理より先に取り込む
+
+  rollTasks(); // ここでようやく繰り越し(必要なら内部でsave()される)
   render();
-  initCloudSync();
+
+  if(fsReady){
+    if(!remoteExisted) pushCloud(payload()); // 初回のみ: クラウドにまだ何もなければ現状を送る
+    subscribeCloud();
+  }
+}
+
+function reconcileCloud(){
+  if(!fsReady) return Promise.resolve(false);
+  return fsDocRef.get().then(function(snap){
+    if(!snap.exists) return false;
+    var remote=snap.data();
+    if(remote&&remote.blob){
+      var remoteUpdated=0;
+      try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){}
+      if(remoteUpdated>(S.updatedAt||0)){
+        apply(remote.blob);
+        migrateGoalPeriods();
+        try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
+      }
+    }
+    return true;
+  }).catch(function(e){ S.cloudError='読み込みエラー: '+(e&&e.message||e); return true; });
 }
 
 var saveTimer=null;
@@ -541,29 +567,6 @@ function pushCloud(val){
   });
 }
 
-function initCloudSync(){
-  if(!fsReady) return;
-  fsDocRef.get().then(function(snap){
-    if(snap.exists){
-      var remote=snap.data();
-      if(remote&&remote.blob){
-        var remoteUpdated=0;
-        try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){}
-        if(remoteUpdated>(S.updatedAt||0)){
-          apply(remote.blob);
-          migrateGoalPeriods();
-          try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
-          rollTasks();render();
-        }else if((S.updatedAt||0)>remoteUpdated){
-          pushCloud(payload());
-        }
-      }
-    }else{
-      pushCloud(payload());
-    }
-    subscribeCloud();
-  }).catch(function(e){ S.cloudError='読み込みエラー: '+(e&&e.message||e); render(); });
-}
 
 function subscribeCloud(){
   if(!fsReady||fsUnsub) return;
@@ -858,7 +861,7 @@ function viewToday(){
   var rows=shown.length?shown.map(function(t,i){
     var c=cat(t.cat);
     var due=daysUntil(t.dueDate),dueBadge='';
-    if(due!=null){
+    if(due!=null&&!t.done&&t.repeat!=='daily'){
       var cls=due<0?'over':due<=1?'soon':'ok';
       var label=due<0?'期限切れ':due===0?'今日まで':'あと'+due+'日';
       dueBadge='<span class="proj-due '+cls+'">'+label+'</span>';
