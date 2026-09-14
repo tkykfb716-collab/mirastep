@@ -444,7 +444,7 @@ var TABS=[
   {id:'money',   name:'お金',        ic:'💰',head:'お金'},
   {id:'review',  name:'振り返り',    ic:'📊',head:'振り返り'}
 ];
-var INCOME_CATS=['給与','副業','ミラステ','投資','臨時収入','その他'];
+var INCOME_CATS=['給与','前払い','副業','ミラステ','投資','臨時収入','その他'];
 var EXPENSE_CATS=['住宅','光熱費','通信費','保険','食費','日用品','教育費','車','ガソリン','娯楽','サブスク','税金','ミラステ経費','その他'];
 var EXPENSE_KINDS=[
   {id:'fixed',label:'固定費'},
@@ -494,7 +494,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{}};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -528,7 +528,7 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths});
 }
 function apply(str){
   var d=JSON.parse(str);
@@ -539,6 +539,8 @@ function apply(str){
   if(S.homeOrder.indexOf('money')===-1) S.homeOrder.push('money');
   S.transactions=d.transactions||[];
   S.comfortBuffer=d.comfortBuffer||0;
+  S.wageSettings=d.wageSettings||null;
+  S.workMonths=d.workMonths||{};
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -1104,6 +1106,41 @@ function avgExpenseByKind(kind,monthsBack){
 }
 function sumTxns(list){return list.reduce(function(a,t){return a+(+t.amount||0);},0);}
 
+/* 給与見込みの計算(設定と今月の勤務入力があれば計算、なければnullを返す項目あり) */
+function computeWage(requiredAmount,minAmount,comfortLine){
+  var ws=S.wageSettings;
+  var wm=S.workMonths[monthKey()];
+  var r={hasSettings:!!ws,hasWork:!!wm};
+  if(!ws||!wm) return r;
+  var overtimeRateYen=ws.hourlyRate*ws.overtimeRate;
+  var normalWage=ws.hourlyRate*ws.dailyHours*(wm.workedDays||0);
+  var absenceLoss=ws.hourlyRate*ws.dailyHours*(wm.unpaidDays||0);
+  var overtimeWage=overtimeRateYen*(wm.overtimeHours||0);
+  var gross=normalWage+overtimeWage;
+  var takeHome=gross*ws.takeHomeRate;
+  var shortfall=requiredAmount-takeHome; // 正=不足, 負=余剰
+  var overtimeRateYenTakeHome=overtimeRateYen*ws.takeHomeRate; // 残業1hあたりの手取り増分
+  var neededOvertimeHours=shortfall>0?(shortfall/overtimeRateYenTakeHome):0;
+  var remainingDays=Math.max(0,(wm.plannedDays||0)-(wm.workedDays||0));
+  var dailyAvgOvertime=remainingDays>0&&neededOvertimeHours>0?(neededOvertimeHours/remainingDays):0;
+
+  var minShortfallFromNormal=minAmount-(normalWage*ws.takeHomeRate);
+  var comfortShortfallFromNormal=comfortLine-(normalWage*ws.takeHomeRate);
+  var overtimeHoursToMin=minShortfallFromNormal>0?(minShortfallFromNormal/overtimeRateYenTakeHome):0;
+  var overtimeHoursToComfort=comfortShortfallFromNormal>0?(comfortShortfallFromNormal/overtimeRateYenTakeHome):0;
+
+  r.normalWage=normalWage;r.absenceLoss=absenceLoss;r.overtimeWage=overtimeWage;
+  r.gross=gross;r.takeHome=takeHome;r.shortfall=shortfall;
+  r.neededOvertimeHours=neededOvertimeHours;r.remainingDays=remainingDays;r.dailyAvgOvertime=dailyAvgOvertime;
+  r.overtimeHoursToMin=overtimeHoursToMin;r.overtimeHoursToComfort=overtimeHoursToComfort;
+  r.overtimeRateYen=overtimeRateYen;
+  r.advancePaid=sumTxns(S.transactions.filter(function(t){
+    return t.type==='income'&&t.category==='前払い'&&t.date&&t.date.slice(0,7)===monthKey();
+  }));
+  r.remainingToReceive=Math.max(0,takeHome-r.advancePaid); // 実際の給料日にまだ受け取る見込み(前払い分を除く)
+  return r;
+}
+
 function viewMoney(){
   var mk=monthKey();
   var monthTxns=S.transactions.filter(function(t){return t.date&&t.date.slice(0,7)===mk;});
@@ -1163,7 +1200,10 @@ function viewMoney(){
 
   var moneyView=S.moneyView||'analysis';
   var viewChips='<button class="chip '+(moneyView==='analysis'?'on':'')+'" data-moneyview="analysis">分析</button>'+
-    '<button class="chip '+(moneyView==='record'?'on':'')+'" data-moneyview="record">記録</button>';
+    '<button class="chip '+(moneyView==='record'?'on':'')+'" data-moneyview="record">記録</button>'+
+    '<button class="chip '+(moneyView==='wage'?'on':'')+'" data-moneyview="wage">給与</button>';
+
+  var wg=computeWage(thisRequired,monthlyMin,comfortLine);
 
   var headline='<div class="sec-head"><span class="sec-title">お金の状態</span></div>'+
     '<div class="card accent" style="--accent-c:var(--purple)">'+
@@ -1171,8 +1211,20 @@ function viewMoney(){
       '<div class="need-row"><span class="need-label">今月必要額</span><span class="need-num">'+yen(thisRequired)+'</span></div>'+
       '<div class="need-row"><span class="need-label">来月必要見込み</span><span class="need-num">'+yen(nextRequired)+'</span></div>'+
       '<div class="need-row"><span class="need-label">余裕ライン</span><span class="need-num" style="color:var(--ink-3);font-size:13px">'+yen(comfortLine)+'</span></div>'+
+      (wg.hasSettings&&wg.hasWork?(
+        '<div class="need-divider"></div>'+
+        '<div class="need-row"><span class="need-label">今月の手取り見込み</span><span class="need-num">'+yen(wg.takeHome)+'</span></div>'+
+        '<div class="need-row"><span class="need-label">'+(wg.shortfall>=0?'不足額':'余剰額')+'</span><span class="need-num" style="color:'+(wg.shortfall>=0?'var(--red)':'var(--green)')+'">'+yen(Math.abs(wg.shortfall))+'</span></div>'+
+        (wg.shortfall>0?(
+          '<div class="need-row"><span class="need-label">必要残業時間</span><span class="need-num">あと約'+wg.neededOvertimeHours.toFixed(1)+'h</span></div>'+
+          (wg.remainingDays>0?('<div class="need-row"><span class="need-label">残り勤務日 / 1日平均</span><span class="need-num" style="font-size:13px">'+wg.remainingDays+'日 ・ '+wg.dailyAvgOvertime.toFixed(1)+'h</span></div>'):'')
+        ):'<div class="need-note">今月必要額はすでに満たせる見込みです</div>')
+      ):(
+        '<div class="need-divider"></div>'+
+        '<div class="need-note">給与タブで時給設定と今月の勤務日数を登録すると、手取り見込みと必要な残業時間がここに表示されます</div>'
+      ))+
       '<div class="need-divider"></div>'+
-      '<div class="need-row"><span class="need-label">今月の収支見込み</span><span class="need-num" style="color:'+(thisShortfall>=0?'var(--green)':'var(--red)')+'">'+(thisShortfall>=0?'余剰 +':'不足 ')+yen(Math.abs(thisShortfall))+'</span></div>'+
+      '<div class="need-row"><span class="need-label">今月の収支見込み(記録ベース)</span><span class="need-num" style="color:'+(thisShortfall>=0?'var(--green)':'var(--red)')+'">'+(thisShortfall>=0?'余剰 +':'不足 ')+yen(Math.abs(thisShortfall))+'</span></div>'+
       (hasNextIncome?('<div class="need-row"><span class="need-label">来月の収支見込み</span><span class="need-num" style="color:'+(nextShortfall>=0?'var(--green)':'var(--red)')+'">'+(nextShortfall>=0?'余剰 +':'不足 ')+yen(Math.abs(nextShortfall))+'</span></div>'):
         '<div class="need-note">来月の収入はまだ記録がないので不足額は計算されません</div>')+
       '<button class="buffer-edit" data-editbuffer="1">余裕ラインを編集 ›</button>'+
@@ -1251,9 +1303,54 @@ function viewMoney(){
     '</div>'+
     '<div class="card">'+txnRows+'</div>';
 
+  var ws=S.wageSettings,wm=S.workMonths[monthKey()];
+  var wageBody='<div class="sec-head"><span class="sec-title">基本設定</span></div>'+
+    '<div class="card" style="padding:14px 16px">'+
+      (ws?(
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">時給</span><span class="load-meta">'+yen(ws.hourlyRate)+'</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">1日の所定労働時間</span><span class="load-meta">'+ws.dailyHours+'時間</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">残業割増率</span><span class="load-meta">'+ws.overtimeRate+'倍</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">手取り率</span><span class="load-meta">'+Math.round(ws.takeHomeRate*100)+'%</span></div>'
+      ):'<div class="mini-empty">まだ設定されていません</div>')+
+      '<button class="buffer-edit" data-editwagesettings="1" style="margin:10px 0 0">'+(ws?'設定を編集 ›':'＋ 設定する')+'</button>'+
+    '</div>'+
+
+    '<div class="sec-head"><span class="sec-title">今月の勤務('+mk+')</span></div>'+
+    '<div class="card" style="padding:14px 16px">'+
+      (wm?(
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">勤務予定日数 / 予定残業</span><span class="load-meta">'+wm.plannedDays+'日 ・ '+(wm.plannedOvertimeHours||0)+'h</span></div>'+
+        '<div class="load-row" style="padding:5px 0;border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">実働日数(実績)</span><span class="load-meta">'+wm.workedDays+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">欠勤日数</span><span class="load-meta">'+wm.unpaidDays+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">有給日数</span><span class="load-meta">'+(wm.paidLeaveDays||0)+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">残業時間(実績)</span><span class="load-meta">'+wm.overtimeHours+'時間</span></div>'+
+        (wg.hasSettings&&wg.advancePaid>0?('<div class="load-row" style="padding:5px 0"><span class="load-name">前払い受取済み(記録から自動集計)</span><span class="load-meta">'+yen(wg.advancePaid)+'</span></div>'):'')
+      ):'<div class="mini-empty">今月の分はまだ入力されていません</div>')+
+      '<button class="buffer-edit" data-editworkmonth="1" style="margin:10px 0 0">'+(wm?'今月の勤務を編集(実績を上書き) ›':'＋ 今月の勤務を入力')+'</button>'+
+    '</div>'+
+
+    (wg.hasSettings&&wg.hasWork?(
+      '<div class="sec-head"><span class="sec-title">給与見込み</span></div>'+
+      '<div class="card">'+
+        '<div class="load-row"><span class="load-name">通常給与</span><span class="load-meta">'+yen(wg.normalWage)+'</span></div>'+
+        (wg.absenceLoss>0?('<div class="load-row"><span class="load-name">欠勤による減少目安</span><span class="load-meta" style="color:var(--red)">-'+yen(wg.absenceLoss)+'</span></div>'):'')+
+        '<div class="load-row"><span class="load-name">残業代</span><span class="load-meta">'+yen(wg.overtimeWage)+'</span></div>'+
+        '<div class="load-row"><span class="load-name">総支給見込み</span><span class="load-meta">'+yen(wg.gross)+'</span></div>'+
+        '<div class="load-row"><span class="load-name">手取り見込み</span><span class="load-meta" style="font-weight:700;color:var(--ink)">'+yen(wg.takeHome)+'</span></div>'+
+        (wg.advancePaid>0?(
+          '<div class="load-row" style="border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">前払い受取済み</span><span class="load-meta">-'+yen(wg.advancePaid)+'</span></div>'+
+          '<div class="load-row"><span class="load-name">給料日に残り受取見込み</span><span class="load-meta" style="font-weight:700">'+yen(wg.remainingToReceive)+'</span></div>'
+        ):'')+
+      '</div>'+
+      '<div class="sec-head"><span class="sec-title">参考: ラインまでの残業</span></div>'+
+      '<div class="card">'+
+        '<div class="load-row"><span class="load-name">最低必要額まで</span><span class="load-meta">'+(wg.overtimeHoursToMin>0?'約'+wg.overtimeHoursToMin.toFixed(1)+'h':'届いています')+'</span></div>'+
+        '<div class="load-row"><span class="load-name">余裕ラインまで</span><span class="load-meta">'+(wg.overtimeHoursToComfort>0?'約'+wg.overtimeHoursToComfort.toFixed(1)+'h':'届いています')+'</span></div>'+
+      '</div>'
+    ):'');
+
   return headline+
     '<div class="chips" style="margin-top:14px">'+viewChips+'</div>'+
-    (moneyView==='analysis'?analysisBody:recordBody)+
+    (moneyView==='analysis'?analysisBody:moneyView==='wage'?wageBody:recordBody)+
     '<div class="footer-quote">"今の状態を、冷静に見える化する。"</div>';
 }
 
@@ -1418,12 +1515,30 @@ function sheetHTML(){
     inner='<h2>余裕ラインの設定</h2>'+
       '<div style="font-size:12px;color:var(--ink-2);margin-bottom:14px;line-height:1.7">毎月最低必要額に、いくら上乗せすれば「余裕がある」と感じられるかを設定できます。</div>'+
       '<div class="f"><label>上乗せ額</label><input id="i-amount" type="number" inputmode="numeric" value="'+(s.amount||'')+'" placeholder="例: 50000"></div>';
+  } else if(s.type==='wagesettings'){
+    inner='<h2>給与の基本設定</h2>'+
+      '<div class="f"><label>時給</label><input id="i-num1" type="number" inputmode="numeric" value="'+(s.num1||'')+'" placeholder="例: 1700"><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>1日の所定労働時間</label><input id="i-num2" type="number" inputmode="decimal" value="'+(s.num2||'')+'" placeholder="例: 8"></div>'+
+      '<div class="f"><label>残業割増率</label><input id="i-num3" type="number" inputmode="decimal" step="0.01" value="'+(s.num3||'')+'" placeholder="例: 1.25"></div>'+
+      '<div class="f"><label>手取り率(%)</label><input id="i-num4" type="number" inputmode="numeric" value="'+(s.num4||'')+'" placeholder="例: 80"></div>';
+  } else if(s.type==='workmonth'){
+    var pace=(s.num1&&s.num2)?(parseFloat(s.num2)/parseFloat(s.num1)):null;
+    inner='<h2>今月の勤務('+monthKey()+')</h2>'+
+      '<div style="font-size:11.5px;color:var(--ink-3);margin-bottom:10px;line-height:1.6">月初の「予定」を目安にして、実際の状況が変わったらそのつど「実績」欄を今の数字に書き換えてください。</div>'+
+      '<div class="f"><label>勤務予定日数</label><input id="i-num1" type="number" inputmode="numeric" value="'+(s.num1||'')+'" placeholder="例: 21"><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>予定残業時間(月合計)</label><input id="i-num2" type="number" inputmode="decimal" value="'+(s.num2||'')+'" placeholder="例: 20"></div>'+
+      (pace?('<div style="font-size:11px;color:var(--ink-3);margin:-8px 2px 12px">1日あたり目安: 約'+pace.toFixed(1)+'時間/日</div>'):'')+
+      '<div class="f"><label>実働日数(実績・上書き)</label><input id="i-num3" type="number" inputmode="numeric" value="'+(s.num3||'')+'" placeholder="例: 12"></div>'+
+      '<div class="f"><label>欠勤日数</label><input id="i-num4" type="number" inputmode="numeric" value="'+(s.num4||'')+'" placeholder="例: 0"></div>'+
+      '<div class="f"><label>有給日数(給与は減りません)</label><input id="i-num5" type="number" inputmode="numeric" value="'+(s.num5||'')+'" placeholder="例: 0"></div>'+
+      '<div class="f"><label>残業時間(実績・上書き)</label><input id="i-num6" type="number" inputmode="decimal" value="'+(s.num6||'')+'" placeholder="例: 8"></div>'+
+      '<div style="font-size:11px;color:var(--ink-3);margin-top:-4px;line-height:1.6">前払いは「記録」タブでカテゴリ「前払い」の収入として登録すると、ここに自動反映されます。</div>';
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
       ((s.id&&s.type!=='sub')||(s.type==='weektheme'&&s.existing)?'<button class="btn dan" id="b-del">削除</button>':'')+
       '<button class="btn" id="b-cancel">キャンセル</button>'+
-      '<button class="btn pri" id="b-ok">'+((s.type==='weektheme'||s.type==='buffer')?'保存':(s.id?'保存':'追加'))+'</button>'+
+      '<button class="btn pri" id="b-ok">'+(['weektheme','buffer','wagesettings','workmonth'].indexOf(s.type)>-1?'保存':(s.id?'保存':'追加'))+'</button>'+
     '</div></div></div>';
 }
 
@@ -1518,6 +1633,20 @@ function bind(){
   q('[data-moneyview]',function(el){el.onclick=function(){S.moneyView=el.dataset.moneyview;render();}});
   q('[data-editbuffer]',function(el){el.onclick=function(){
     S.sheet={type:'buffer',id:null,amount:S.comfortBuffer||''};render();
+  }});
+  q('[data-editwagesettings]',function(el){el.onclick=function(){
+    var ws=S.wageSettings;
+    S.sheet={type:'wagesettings',id:null,
+      num1:ws?ws.hourlyRate:'',num2:ws?ws.dailyHours:'',num3:ws?ws.overtimeRate:'',num4:ws?Math.round(ws.takeHomeRate*100):''};
+    render();
+  }});
+  q('[data-editworkmonth]',function(el){el.onclick=function(){
+    var wm=S.workMonths[monthKey()];
+    S.sheet={type:'workmonth',id:null,
+      num1:wm?wm.plannedDays:'',num2:wm?wm.plannedOvertimeHours:'',
+      num3:wm?wm.workedDays:'',num4:wm?wm.unpaidDays:'',num5:wm?wm.paidLeaveDays:'',
+      num6:wm?wm.overtimeHours:''};
+    render();
   }});
   q('[data-movetask]',function(el){el.onclick=function(){
     var list=todayTasks(),id=el.dataset.movetask,dir=parseInt(el.dataset.move,10);
@@ -1636,6 +1765,10 @@ function keepInput(){
   var ta=document.getElementById('i-amount'),td=document.getElementById('i-tdate');
   if(t)S.sheet.title=t.value; if(n)S.sheet.note=n.value; if(d)S.sheet.deadline=d.value;
   if(ta)S.sheet.amount=ta.value; if(td)S.sheet.txnDate=td.value;
+  for(var i=1;i<=8;i++){
+    var el=document.getElementById('i-num'+i);
+    if(el)S.sheet['num'+i]=el.value;
+  }
 }
 
 function submit(){
@@ -1649,6 +1782,33 @@ function submit(){
   if(s.type==='buffer'){
     var bufAmt=parseFloat(s.amount);
     S.comfortBuffer=(!bufAmt||isNaN(bufAmt)||bufAmt<0)?0:bufAmt;
+    S.sheet=null;save();render();return;
+  }
+  if(s.type==='wagesettings'){
+    var hr=parseFloat(s.num1),dh=parseFloat(s.num2),ot=parseFloat(s.num3),tr=parseFloat(s.num4);
+    var errW=document.getElementById('e-title');
+    if(!hr||hr<=0||isNaN(hr)){ if(errW)errW.textContent='時給を入力してください'; return; }
+    S.wageSettings={
+      hourlyRate:hr,
+      dailyHours:(!dh||isNaN(dh))?8:dh,
+      overtimeRate:(!ot||isNaN(ot))?1.25:ot,
+      takeHomeRate:(!tr||isNaN(tr))?0.8:(tr/100)
+    };
+    S.sheet=null;save();render();return;
+  }
+  if(s.type==='workmonth'){
+    var pd=parseFloat(s.num1),pot=parseFloat(s.num2),wd=parseFloat(s.num3),
+        ud=parseFloat(s.num4),pld=parseFloat(s.num5),oh=parseFloat(s.num6);
+    var errM=document.getElementById('e-title');
+    if(isNaN(pd)||pd<=0){ if(errM)errM.textContent='勤務予定日数を入力してください'; return; }
+    S.workMonths[monthKey()]={
+      plannedDays:pd,
+      plannedOvertimeHours:isNaN(pot)?0:pot,
+      workedDays:isNaN(wd)?0:wd,
+      unpaidDays:isNaN(ud)?0:ud,
+      paidLeaveDays:isNaN(pld)?0:pld,
+      overtimeHours:isNaN(oh)?0:oh
+    };
     S.sheet=null;save();render();return;
   }
   if(s.type==='txn'){
