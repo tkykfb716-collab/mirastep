@@ -183,6 +183,17 @@ body{
 .txn-sub{font-size:11px;color:var(--ink-3);margin-top:2px}
 .txn-amount{font-size:13.5px;font-weight:600;flex-shrink:0;white-space:nowrap}
 
+.need-row{display:flex;align-items:baseline;justify-content:space-between;padding:8px 16px}
+.need-label{font-size:13px;color:var(--ink-2)}
+.need-num{font-family:'Zen Maru Gothic',sans-serif;font-size:17px;font-weight:700;color:var(--ink)}
+.need-divider{border-top:1px solid var(--line-soft);margin:2px 16px}
+.need-note{font-size:11.5px;color:var(--ink-3);padding:6px 16px 2px;line-height:1.6}
+.buffer-edit{
+  display:block;width:calc(100% - 32px);margin:8px 16px 14px;padding:9px;
+  border:1px solid var(--line);border-radius:10px;background:#fbfcfe;color:var(--blue);
+  font-family:inherit;font-size:12px;cursor:pointer;
+}
+
 /* task row */
 .task{
   display:flex;align-items:flex-start;gap:11px;
@@ -435,6 +446,14 @@ var TABS=[
 ];
 var INCOME_CATS=['給与','副業','ミラステ','投資','臨時収入','その他'];
 var EXPENSE_CATS=['住宅','光熱費','通信費','保険','食費','日用品','教育費','車','ガソリン','娯楽','サブスク','税金','ミラステ経費','その他'];
+var EXPENSE_KINDS=[
+  {id:'fixed',label:'固定費'},
+  {id:'variable',label:'変動費'},
+  {id:'subscription',label:'サブスク'},
+  {id:'loan',label:'借入返済'},
+  {id:'irregular',label:'臨時支出'},
+  {id:'overdue',label:'遅延・未払い'}
+];
 var DEFAULT_CATS=[
   {id:'work',   label:'仕事',    c:'var(--blue)',  bg:'var(--blue-soft)'},
   {id:'seo',    label:'SEO',     c:'var(--teal)',  bg:'var(--teal-soft)'},
@@ -475,7 +494,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all'};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -509,7 +528,7 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer});
 }
 function apply(str){
   var d=JSON.parse(str);
@@ -519,6 +538,7 @@ function apply(str){
   S.homeOrder=(d.homeOrder&&d.homeOrder.length)?d.homeOrder:['today','goals','week','projects','money','review'];
   if(S.homeOrder.indexOf('money')===-1) S.homeOrder.push('money');
   S.transactions=d.transactions||[];
+  S.comfortBuffer=d.comfortBuffer||0;
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -533,7 +553,7 @@ async function load(){
     try{ var r=await window.storage.get(KEY,false); if(r&&r.value){apply(r.value);got=true;} }catch(e){}
   }
   if(!got) seed();
-  migrateGoalPeriods();
+  migrateGoalPeriods();migrateTransactions();
   render(); // まず今わかっている状態を即表示(オフラインでもここまでは動く)
 
   var remoteExisted=await reconcileCloud(); // クラウドの方が新しければ、繰り越し処理より先に取り込む
@@ -557,7 +577,7 @@ function reconcileCloud(){
       try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){}
       if(remoteUpdated>(S.updatedAt||0)){
         apply(remote.blob);
-        migrateGoalPeriods();
+        migrateGoalPeriods();migrateTransactions();
         try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
       }
     }
@@ -602,7 +622,7 @@ function subscribeCloud(){
     try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){ return; }
     if(remoteUpdated>(S.updatedAt||0)){
       apply(remote.blob);
-      migrateGoalPeriods();
+      migrateGoalPeriods();migrateTransactions();
       try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
       rollTasks();render();
     }
@@ -768,6 +788,15 @@ function migrateGoalPeriods(){
   S.goals.forEach(function(g){
     if(g.horizon==='month'&&!g.period) g.period=currentMonthPeriod();
     if(g.horizon==='week'&&!g.period) g.period=currentWeekPeriod();
+  });
+}
+
+/* 旧: fixedVariable('fixed'/'variable') → 新: expenseKind(6分類) への移行 */
+function migrateTransactions(){
+  S.transactions.forEach(function(t){
+    if(t.type==='expense'&&!t.expenseKind){
+      t.expenseKind=(t.fixedVariable==='fixed')?'fixed':'variable';
+    }
   });
 }
 
@@ -1057,6 +1086,23 @@ function viewProjects(){
 
 function monthKey(d){d=d||new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)}
 function yen(n){return (n<0?'-':'')+'¥'+Math.abs(Math.round(n||0)).toLocaleString('ja-JP')}
+function nextMonthKey(){var d=new Date();d.setMonth(d.getMonth()+1);return monthKey(d);}
+function kindLabel(id){var k=EXPENSE_KINDS.filter(function(x){return x.id===id;})[0];return k?k.label:id;}
+
+/* 指定した支出分類について、実績がある直近N月の平均額を返す(データが無い月は無視) */
+function avgExpenseByKind(kind,monthsBack){
+  var sums={};
+  S.transactions.forEach(function(t){
+    if(t.type==='expense'&&t.expenseKind===kind&&t.date){
+      var mk=t.date.slice(0,7);
+      sums[mk]=(sums[mk]||0)+(+t.amount||0);
+    }
+  });
+  var keys=Object.keys(sums).sort().reverse().slice(0,monthsBack);
+  if(!keys.length) return 0;
+  return keys.reduce(function(a,k){return a+sums[k];},0)/keys.length;
+}
+function sumTxns(list){return list.reduce(function(a,t){return a+(+t.amount||0);},0);}
 
 function viewMoney(){
   var mk=monthKey();
@@ -1088,8 +1134,69 @@ function viewMoney(){
 
   var weekTheme=S.weekNotes[currentWeekPeriod().monday]||'';
 
+  /* ---- 分析計算 ---- */
+  var avgFixed=avgExpenseByKind('fixed',3);
+  var avgVariable=avgExpenseByKind('variable',3);
+  var avgSub=avgExpenseByKind('subscription',3);
+  var avgLoan=avgExpenseByKind('loan',3);
+  var monthlyMin=avgFixed+avgVariable+avgSub+avgLoan;
+  var comfortLine=monthlyMin+(S.comfortBuffer||0);
+
+  var thisIrregular=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='irregular';}));
+  var thisOverdue=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='overdue';}));
+  var thisRequired=monthlyMin+thisIrregular+thisOverdue;
+  var thisShortfall=income-thisRequired; // 正=余剰, 負=不足
+
+  var nmk=nextMonthKey();
+  var nextTxns=S.transactions.filter(function(t){return t.date&&t.date.slice(0,7)===nmk;});
+  var nextIrregular=sumTxns(nextTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='irregular';}));
+  var nextRequired=monthlyMin+nextIrregular;
+  var nextIncomeEntered=sumTxns(nextTxns.filter(function(t){return t.type==='income';}));
+  var hasNextIncome=nextTxns.some(function(t){return t.type==='income';});
+  var nextShortfall=hasNextIncome?(nextIncomeEntered-nextRequired):null;
+
+  var kindBreakdown=EXPENSE_KINDS.map(function(k){
+    var amt=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind===k.id;}));
+    return {id:k.id,label:k.label,amount:amt};
+  });
+  var kindTotal=kindBreakdown.reduce(function(a,k){return a+k.amount;},0)||1;
+
+  var moneyView=S.moneyView||'analysis';
+  var viewChips='<button class="chip '+(moneyView==='analysis'?'on':'')+'" data-moneyview="analysis">分析</button>'+
+    '<button class="chip '+(moneyView==='record'?'on':'')+'" data-moneyview="record">記録</button>';
+
+  var headline='<div class="sec-head"><span class="sec-title">お金の状態</span></div>'+
+    '<div class="card accent" style="--accent-c:var(--purple)">'+
+      '<div class="need-row"><span class="need-label">毎月最低必要額</span><span class="need-num">'+yen(monthlyMin)+'</span></div>'+
+      '<div class="need-row"><span class="need-label">今月必要額</span><span class="need-num">'+yen(thisRequired)+'</span></div>'+
+      '<div class="need-row"><span class="need-label">来月必要見込み</span><span class="need-num">'+yen(nextRequired)+'</span></div>'+
+      '<div class="need-row"><span class="need-label">余裕ライン</span><span class="need-num" style="color:var(--ink-3);font-size:13px">'+yen(comfortLine)+'</span></div>'+
+      '<div class="need-divider"></div>'+
+      '<div class="need-row"><span class="need-label">今月の収支見込み</span><span class="need-num" style="color:'+(thisShortfall>=0?'var(--green)':'var(--red)')+'">'+(thisShortfall>=0?'余剰 +':'不足 ')+yen(Math.abs(thisShortfall))+'</span></div>'+
+      (hasNextIncome?('<div class="need-row"><span class="need-label">来月の収支見込み</span><span class="need-num" style="color:'+(nextShortfall>=0?'var(--green)':'var(--red)')+'">'+(nextShortfall>=0?'余剰 +':'不足 ')+yen(Math.abs(nextShortfall))+'</span></div>'):
+        '<div class="need-note">来月の収入はまだ記録がないので不足額は計算されません</div>')+
+      '<button class="buffer-edit" data-editbuffer="1">余裕ラインを編集 ›</button>'+
+    '</div>';
+
+  var analysisBody='<div class="sec-head"><span class="sec-title">今月の支出内訳</span></div>'+
+    '<div class="card">'+kindBreakdown.map(function(k){
+      var pct=Math.round(k.amount/kindTotal*100);
+      return '<div class="load-row"><span class="load-name">'+k.label+'</span>'+
+        '<div class="mini-bar" style="flex:1;margin:0 8px"><span style="width:'+pct+'%;background:var(--purple)"></span></div>'+
+        '<span class="load-meta">'+yen(k.amount)+'</span></div>';
+    }).join('')+'</div>'+
+    '<div class="sec-head"><span class="sec-title">来月予測の内訳</span></div>'+
+    '<div class="card">'+
+      '<div class="load-row"><span class="load-name">固定費(平均)</span><span class="load-meta">'+yen(avgFixed)+'</span></div>'+
+      '<div class="load-row"><span class="load-name">変動費(平均)</span><span class="load-meta">'+yen(avgVariable)+'</span></div>'+
+      '<div class="load-row"><span class="load-name">サブスク(平均)</span><span class="load-meta">'+yen(avgSub)+'</span></div>'+
+      '<div class="load-row"><span class="load-name">借入返済(平均)</span><span class="load-meta">'+yen(avgLoan)+'</span></div>'+
+      (nextIrregular>0?('<div class="load-row"><span class="load-name">来月分の臨時支出</span><span class="load-meta">'+yen(nextIrregular)+'</span></div>'):'')+
+    '</div>'+
+    '<div style="font-size:11.5px;color:var(--ink-3);margin:0 2px 4px;line-height:1.6">固定費・変動費・サブスク・借入返済は直近最大3ヶ月の実績平均から算出。来月分の臨時支出は、あらかじめ来月の日付で登録した分だけ反映されます。</div>';
+
   var moneyFilter=S.moneyFilter||'all';
-  var chips='<button class="chip '+(moneyFilter==='all'?'on':'')+'" data-moneyf="all">すべて</button>'+
+  var filterChips='<button class="chip '+(moneyFilter==='all'?'on':'')+'" data-moneyf="all">すべて</button>'+
     '<button class="chip '+(moneyFilter==='personal'?'on':'')+'" data-moneyf="personal">個人</button>'+
     '<button class="chip '+(moneyFilter==='mirasute'?'on':'')+'" data-moneyf="mirasute">ミラステ</button>';
 
@@ -1107,7 +1214,7 @@ function viewMoney(){
     '</div>';
   }).join(''):'<div class="empty">今月の記録はまだありません。</div>';
 
-  return '<div class="sec-head"><span class="sec-title">今月のお金</span></div>'+
+  var recordBody='<div class="sec-head"><span class="sec-title">今月のお金</span></div>'+
     '<div class="card accent" style="--accent-c:var(--green)">'+
       '<div class="money-grid">'+
         '<div class="money-cell"><div class="money-label">収入</div><div class="money-num" style="color:var(--green)">'+yen(income)+'</div></div>'+
@@ -1137,12 +1244,16 @@ function viewMoney(){
     ):'')+
 
     '<div class="sec-head"><span class="sec-title">記録</span></div>'+
-    '<div class="chips">'+chips+'</div>'+
+    '<div class="chips">'+filterChips+'</div>'+
     '<div class="add-row-pair">'+
       '<button class="add-money-btn income" data-new="income">＋ 収入を追加</button>'+
       '<button class="add-money-btn expense" data-new="expense">＋ 支出を追加</button>'+
     '</div>'+
-    '<div class="card">'+txnRows+'</div>'+
+    '<div class="card">'+txnRows+'</div>';
+
+  return headline+
+    '<div class="chips" style="margin-top:14px">'+viewChips+'</div>'+
+    (moneyView==='analysis'?analysisBody:recordBody)+
     '<div class="footer-quote">"今の状態を、冷静に見える化する。"</div>';
 }
 
@@ -1295,21 +1406,24 @@ function sheetHTML(){
         '<button class="opt '+(s.scope==='personal'?'on':'')+'" data-pick="scope|personal" style="'+(s.scope==='personal'?'color:var(--blue);background:var(--blue-soft)':'')+'">個人</button>'+
         '<button class="opt '+(s.scope==='mirasute'?'on':'')+'" data-pick="scope|mirasute" style="'+(s.scope==='mirasute'?'color:var(--purple);background:var(--purple-soft)':'')+'">ミラステ</button>'+
       '</div></div>'+
-      (!isIncome?('<div class="f"><label>固定費 / 変動費</label><div class="opts">'+
-        '<button class="opt '+(s.fixedVariable==='fixed'?'on':'')+'" data-pick="fixedVariable|fixed" style="'+(s.fixedVariable==='fixed'?'color:var(--blue);background:var(--blue-soft)':'')+'">固定費</button>'+
-        '<button class="opt '+(s.fixedVariable==='variable'?'on':'')+'" data-pick="fixedVariable|variable" style="'+(s.fixedVariable==='variable'?'color:var(--blue);background:var(--blue-soft)':'')+'">変動費</button>'+
+      (!isIncome?('<div class="f"><label>分類</label><div class="opts">'+
+        EXPENSE_KINDS.map(function(k){return '<button class="opt '+(s.expenseKind===k.id?'on':'')+'" data-pick="expenseKind|'+k.id+'" style="'+(s.expenseKind===k.id?'color:var(--blue);background:var(--blue-soft)':'')+'">'+k.label+'</button>';}).join('')+
       '</div></div>'):'')+
       (isIncome&&s.scope==='mirasute'&&S.projects.length?('<div class="f"><label>講座(任意)</label><div class="opts">'+
         '<button class="opt '+(!s.courseId?'on':'')+'" data-pick="courseId|" style="'+(!s.courseId?'color:var(--blue);background:var(--blue-soft)':'')+'">なし</button>'+
         S.projects.map(function(p){return '<button class="opt '+(s.courseId===p.id?'on':'')+'" data-pick="courseId|'+p.id+'" style="'+(s.courseId===p.id?'color:var(--blue);background:var(--blue-soft)':'')+'">'+p.emoji+' '+esc(p.name)+'</button>';}).join('')+
       '</div></div>'):'')+
       '<div class="f"><label>メモ(任意)</label><textarea id="i-note" placeholder="詳細など">'+esc(s.note||'')+'</textarea></div>';
+  } else if(s.type==='buffer'){
+    inner='<h2>余裕ラインの設定</h2>'+
+      '<div style="font-size:12px;color:var(--ink-2);margin-bottom:14px;line-height:1.7">毎月最低必要額に、いくら上乗せすれば「余裕がある」と感じられるかを設定できます。</div>'+
+      '<div class="f"><label>上乗せ額</label><input id="i-amount" type="number" inputmode="numeric" value="'+(s.amount||'')+'" placeholder="例: 50000"></div>';
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
       ((s.id&&s.type!=='sub')||(s.type==='weektheme'&&s.existing)?'<button class="btn dan" id="b-del">削除</button>':'')+
       '<button class="btn" id="b-cancel">キャンセル</button>'+
-      '<button class="btn pri" id="b-ok">'+(s.type==='weektheme'?'保存':(s.id?'保存':'追加'))+'</button>'+
+      '<button class="btn pri" id="b-ok">'+((s.type==='weektheme'||s.type==='buffer')?'保存':(s.id?'保存':'追加'))+'</button>'+
     '</div></div></div>';
 }
 
@@ -1392,7 +1506,7 @@ function bind(){
   q('[data-edittxn]',function(el){el.onclick=function(){
     var tx=find(S.transactions,el.dataset.edittxn);if(!tx)return;
     S.sheet={type:'txn',id:tx.id,txnType:tx.type,title:tx.name,amount:tx.amount,txnDate:tx.date,
-      category:tx.category,scope:tx.scope,fixedVariable:tx.fixedVariable||'',courseId:tx.courseId||'',note:tx.memo||''};
+      category:tx.category,scope:tx.scope,expenseKind:tx.expenseKind||'variable',courseId:tx.courseId||'',note:tx.memo||''};
     render();
   }});
   q('[data-deltxn]',function(el){el.onclick=function(e){
@@ -1401,6 +1515,10 @@ function bind(){
     save();render();
   }});
   q('[data-moneyf]',function(el){el.onclick=function(){S.moneyFilter=el.dataset.moneyf;render();}});
+  q('[data-moneyview]',function(el){el.onclick=function(){S.moneyView=el.dataset.moneyview;render();}});
+  q('[data-editbuffer]',function(el){el.onclick=function(){
+    S.sheet={type:'buffer',id:null,amount:S.comfortBuffer||''};render();
+  }});
   q('[data-movetask]',function(el){el.onclick=function(){
     var list=todayTasks(),id=el.dataset.movetask,dir=parseInt(el.dataset.move,10);
     var idx=list.findIndex(function(x){return x.id===id}),j=idx+dir;
@@ -1476,7 +1594,7 @@ function bind(){
     if(k==='goal')S.sheet={type:'goal',id:null,title:'',note:'',horizon:'week',period:currentWeekPeriod()};
     if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
     if(k==='cat')S.sheet={type:'cat',id:null,title:'',colorIdx:S.cats.length%CAT_PALETTE.length};
-    if(k==='income'||k==='expense')S.sheet={type:'txn',id:null,txnType:k,title:'',amount:'',txnDate:todayKey(),category:'',scope:'personal',fixedVariable:k==='expense'?'variable':'',courseId:'',note:''};
+    if(k==='income'||k==='expense')S.sheet={type:'txn',id:null,txnType:k,title:'',amount:'',txnDate:todayKey(),category:'',scope:'personal',expenseKind:'variable',courseId:'',note:''};
     render();
   }});
 
@@ -1528,6 +1646,11 @@ function submit(){
     if(val) S.weekNotes[wk]=val; else delete S.weekNotes[wk];
     S.sheet=null;save();render();return;
   }
+  if(s.type==='buffer'){
+    var bufAmt=parseFloat(s.amount);
+    S.comfortBuffer=(!bufAmt||isNaN(bufAmt)||bufAmt<0)?0:bufAmt;
+    S.sheet=null;save();render();return;
+  }
   if(s.type==='txn'){
     var amt=parseFloat(s.amount);
     var tTitle=(s.title||'').trim();
@@ -1538,7 +1661,7 @@ function submit(){
     var rec={
       id:s.id||g(),type:s.txnType,name:tTitle,amount:amt,date:s.txnDate||todayKey(),
       category:s.category||'その他',scope:s.scope||'personal',
-      fixedVariable:s.txnType==='expense'?(s.fixedVariable||'variable'):'',
+      expenseKind:s.txnType==='expense'?(s.expenseKind||'variable'):'',
       courseId:s.courseId||'',memo:(s.note||'').trim(),source:'manual',
       createdAt:old?old.createdAt:Date.now()
     };
