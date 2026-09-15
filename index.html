@@ -501,7 +501,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey()};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -535,7 +535,7 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths,fixedCostTemplates:S.fixedCostTemplates});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths,fixedCostTemplates:S.fixedCostTemplates,templatesSeeded:S.templatesSeeded});
 }
 function apply(str){
   var d=JSON.parse(str);
@@ -549,6 +549,7 @@ function apply(str){
   S.wageSettings=d.wageSettings||null;
   S.workMonths=d.workMonths||{};
   S.fixedCostTemplates=d.fixedCostTemplates||[];
+  S.templatesSeeded=!!d.templatesSeeded;
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -567,6 +568,7 @@ async function load(){
   render(); // まず今わかっている状態を即表示(オフラインでもここまでは動く)
 
   var remoteExisted=await reconcileCloud(); // クラウドの方が新しければ、繰り越し処理より先に取り込む
+  seedInitialTemplates(); // 初回のみ: 記録済みのサブスク・借入返済をテンプレートとして登録
 
   rollTasks(); // ここでようやく繰り越し(必要なら内部でsave()される)
   render();
@@ -808,6 +810,30 @@ function migrateTransactions(){
       t.expenseKind=(t.fixedVariable==='fixed')?'fixed':'variable';
     }
   });
+}
+
+/* 一度だけ実行: 記録済みのサブスク・借入返済を固定費テンプレートとして登録しておく */
+function seedInitialTemplates(){
+  if(S.templatesSeeded) return;
+  S.templatesSeeded=true;
+  if(S.fixedCostTemplates.length) return; // 既に何か登録済みなら上書きしない
+  var initial=[
+    {name:'住宅ローン',amount:47000,kind:'loan',scope:'personal'},
+    {name:'カードローン利息',amount:34000,kind:'loan',scope:'personal'},
+    {name:'モビット',amount:30000,kind:'loan',scope:'personal'},
+    {name:'プロミス',amount:14150,kind:'loan',scope:'personal'},
+    {name:'Kindle Unlimited',amount:980,kind:'subscription',scope:'personal'},
+    {name:'アマプラ',amount:600,kind:'subscription',scope:'personal'},
+    {name:'DAZN',amount:2240,kind:'subscription',scope:'personal'},
+    {name:'Google Workspace Business Standard',amount:2090,kind:'subscription',scope:'mirasute'},
+    {name:'チャットGPT',amount:3000,kind:'subscription',scope:'mirasute'},
+    {name:'LYPプレミアム',amount:890,kind:'subscription',scope:'personal'},
+    {name:'クロード',amount:3000,kind:'subscription',scope:'mirasute'},
+    {name:'Apple creator studio',amount:1780,kind:'subscription',scope:'mirasute'},
+    {name:'AppleOne',amount:1350,kind:'subscription',scope:'personal'}
+  ];
+  initial.forEach(function(t){ t.id=g(); t.dayOfMonth=null; S.fixedCostTemplates.push(t); });
+  save();
 }
 
 function ladderConnector(colorFrom,colorTo){
