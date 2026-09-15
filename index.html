@@ -1239,36 +1239,44 @@ function computeWage(month,requiredAmount,minAmount,comfortLine){
   var unpaidCount=absenceLogs.filter(function(a){return a.type==='unpaid';}).length;
   var paidCount=absenceLogs.filter(function(a){return a.type==='paid';}).length;
   var workedDays=Math.max(0,plannedDays-unpaidCount-paidCount);
-  var overtimeHoursTotal=overtimeLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
+  var overtimeHoursActual=overtimeLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
   var holidayHoursTotal=holidayLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
+  var plannedOvertimeHours=wm.plannedOvertimeHours||0;
+  // 見込みは「予定残業時間」をベースにする。実績がすでに予定を超えていれば、実績の方を使う
+  var overtimeHoursForecast=Math.max(overtimeHoursActual,plannedOvertimeHours);
 
   var overtimeRateYen=ws.hourlyRate*ws.overtimeRate;
   var holidayRateYen=ws.hourlyRate*(ws.holidayWorkRate||1.25);
   var normalWage=ws.hourlyRate*ws.dailyHours*workedDays;
   var absenceLoss=ws.hourlyRate*ws.dailyHours*unpaidCount;
-  var overtimeWage=overtimeRateYen*overtimeHoursTotal;
+  var overtimeWageActual=overtimeRateYen*overtimeHoursActual;
+  var overtimeWage=overtimeRateYen*overtimeHoursForecast; // 見込み側で使う残業代(予定ベース)
   var holidayWage=holidayRateYen*holidayHoursTotal;
-  var gross=normalWage+overtimeWage+holidayWage;
-  var takeHome=gross*ws.takeHomeRate;
+  var grossActual=normalWage+overtimeWageActual+holidayWage;
+  var gross=normalWage+overtimeWage+holidayWage; // 見込み総支給(予定残業を反映)
+  var takeHomeActual=grossActual*ws.takeHomeRate;
+  var takeHome=gross*ws.takeHomeRate; // 見込み手取り
 
   r.plannedDays=plannedDays;r.workedDays=workedDays;r.unpaidCount=unpaidCount;r.paidCount=paidCount;
-  r.overtimeHoursTotal=overtimeHoursTotal;r.holidayHoursTotal=holidayHoursTotal;
-  r.normalWage=normalWage;r.absenceLoss=absenceLoss;r.overtimeWage=overtimeWage;r.holidayWage=holidayWage;
-  r.gross=gross;r.takeHome=takeHome;
+  r.overtimeHoursTotal=overtimeHoursActual;r.overtimeHoursForecast=overtimeHoursForecast;r.plannedOvertimeHours=plannedOvertimeHours;
+  r.holidayHoursTotal=holidayHoursTotal;
+  r.normalWage=normalWage;r.absenceLoss=absenceLoss;
+  r.overtimeWageActual=overtimeWageActual;r.overtimeWage=overtimeWage;r.holidayWage=holidayWage;
+  r.grossActual=grossActual;r.gross=gross;r.takeHomeActual=takeHomeActual;r.takeHome=takeHome;
   r.overtimeRateYen=overtimeRateYen;
   r.advancePaid=sumTxns(S.transactions.filter(function(t){
     return t.type==='income'&&t.category==='前払い'&&t.date&&t.date.slice(0,7)===month;
   }));
-  r.remainingToReceive=Math.max(0,takeHome-r.advancePaid); // 実際の給料日にまだ受け取る見込み(前払い分を除く)
+  r.remainingToReceive=Math.max(0,takeHome-r.advancePaid); // 見込み手取りから前払い分を除いた、給料日の残り受取見込み
 
   if(requiredAmount!=null){ // 比較対象(今月必要額など)が渡された時だけ計算する、現在の月の意思決定用の数字
     var overtimeRateYenTakeHome=overtimeRateYen*ws.takeHomeRate;
-    var shortfall=requiredAmount-takeHome;
-    var neededOvertimeHours=shortfall>0?(shortfall/overtimeRateYenTakeHome):0;
+    var shortfall=requiredAmount-takeHome; // 予定残業込みの見込みで判定
+    var neededOvertimeHours=shortfall>0?(shortfall/overtimeRateYenTakeHome):0; // 予定に加えて、さらに必要な残業時間
     var remainingDays=Math.max(0,plannedDays-workedDays);
     var dailyAvgOvertime=remainingDays>0&&neededOvertimeHours>0?(neededOvertimeHours/remainingDays):0;
 
-    var baselineTakeHome=(normalWage+holidayWage)*ws.takeHomeRate;
+    var baselineTakeHome=(normalWage+holidayWage)*ws.takeHomeRate; // 残業を除いたベース
     var amountToMin=Math.max(0,minAmount-baselineTakeHome);
     var amountToComfort=Math.max(0,comfortLine-baselineTakeHome);
     var overtimeHoursToMin=amountToMin>0?(amountToMin/overtimeRateYenTakeHome):0;
@@ -1511,11 +1519,12 @@ function viewMoney(){
       ):'<div class="empty">この月の記録はありません。</div>');
 
     if(wgView.hasWork){
-      wageBody+='<div class="sec-head"><span class="sec-title">給与見込み</span></div>'+
+      wageBody+='<div class="sec-head"><span class="sec-title">給与見込み(予定残業'+wgView.plannedOvertimeHours+'h込み)</span></div>'+
         '<div class="card">'+
           '<div class="load-row"><span class="load-name">通常給与</span><span class="load-meta">'+yen(wgView.normalWage)+'</span></div>'+
           (wgView.absenceLoss>0?('<div class="load-row"><span class="load-name">欠勤による減少目安</span><span class="load-meta" style="color:var(--red)">-'+yen(wgView.absenceLoss)+'</span></div>'):'')+
-          '<div class="load-row"><span class="load-name">残業代</span><span class="load-meta">'+yen(wgView.overtimeWage)+'</span></div>'+
+          '<div class="load-row"><span class="load-name">残業代(予定 '+wgView.overtimeHoursForecast+'h)</span><span class="load-meta">'+yen(wgView.overtimeWage)+'</span></div>'+
+          (wgView.overtimeHoursTotal>0?('<div class="load-row"><span class="load-name" style="color:var(--ink-3);font-size:11.5px">└ うち実績 '+wgView.overtimeHoursTotal+'h</span><span class="load-meta" style="color:var(--ink-3);font-size:11.5px">'+yen(wgView.overtimeWageActual)+'</span></div>'):'')+
           (wgView.holidayWage>0?('<div class="load-row"><span class="load-name">休日出勤代</span><span class="load-meta">'+yen(wgView.holidayWage)+'</span></div>'):'')+
           '<div class="load-row"><span class="load-name">総支給見込み</span><span class="load-meta">'+yen(wgView.gross)+'</span></div>'+
           '<div class="load-row"><span class="load-name">手取り見込み</span><span class="load-meta" style="font-weight:700;color:var(--ink)">'+yen(wgView.takeHome)+'</span></div>'+
@@ -1526,6 +1535,7 @@ function viewMoney(){
         '</div>'+
         (isCurrentMonth?(
           '<div class="sec-head"><span class="sec-title">参考: ラインまでの残業</span></div>'+
+          '<div style="font-size:11px;color:var(--ink-3);margin:-4px 2px 8px;line-height:1.6">↑の「見込み」を基準に、それでも足りない分だけを計算</div>'+
           '<div class="card">'+
             '<div class="load-row"><span class="load-name">最低必要額まで</span><span class="load-meta">'+(wgView.amountToMin>0?yen(wgView.amountToMin)+'(約'+wgView.overtimeHoursToMin.toFixed(1)+'h)':'届いています')+'</span></div>'+
             '<div class="load-row"><span class="load-name">余裕ラインまで</span><span class="load-meta">'+(wgView.amountToComfort>0?yen(wgView.amountToComfort)+'(約'+wgView.overtimeHoursToComfort.toFixed(1)+'h)':'届いています')+'</span></div>'+
