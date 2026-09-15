@@ -1197,10 +1197,13 @@ function computeWage(requiredAmount,minAmount,comfortLine){
   var remainingDays=Math.max(0,plannedDays-workedDays);
   var dailyAvgOvertime=remainingDays>0&&neededOvertimeHours>0?(neededOvertimeHours/remainingDays):0;
 
-  var minShortfallFromNormal=minAmount-(normalWage*ws.takeHomeRate);
-  var comfortShortfallFromNormal=comfortLine-(normalWage*ws.takeHomeRate);
-  var overtimeHoursToMin=minShortfallFromNormal>0?(minShortfallFromNormal/overtimeRateYenTakeHome):0;
-  var overtimeHoursToComfort=comfortShortfallFromNormal>0?(comfortShortfallFromNormal/overtimeRateYenTakeHome):0;
+  var baselineTakeHome=(normalWage+holidayWage)*ws.takeHomeRate; // 残業を除く、通常給与+休日出勤分の手取り
+  var minShortfallFromNormal=minAmount-baselineTakeHome;
+  var comfortShortfallFromNormal=comfortLine-baselineTakeHome;
+  var amountToMin=Math.max(0,minShortfallFromNormal);
+  var amountToComfort=Math.max(0,comfortShortfallFromNormal);
+  var overtimeHoursToMin=amountToMin>0?(amountToMin/overtimeRateYenTakeHome):0;
+  var overtimeHoursToComfort=amountToComfort>0?(amountToComfort/overtimeRateYenTakeHome):0;
 
   r.plannedDays=plannedDays;r.workedDays=workedDays;r.unpaidCount=unpaidCount;r.paidCount=paidCount;
   r.overtimeHoursTotal=overtimeHoursTotal;r.holidayHoursTotal=holidayHoursTotal;
@@ -1208,6 +1211,7 @@ function computeWage(requiredAmount,minAmount,comfortLine){
   r.gross=gross;r.takeHome=takeHome;r.shortfall=shortfall;
   r.neededOvertimeHours=neededOvertimeHours;r.remainingDays=remainingDays;r.dailyAvgOvertime=dailyAvgOvertime;
   r.overtimeHoursToMin=overtimeHoursToMin;r.overtimeHoursToComfort=overtimeHoursToComfort;
+  r.amountToMin=amountToMin;r.amountToComfort=amountToComfort;
   r.overtimeRateYen=overtimeRateYen;
   r.advancePaid=sumTxns(S.transactions.filter(function(t){
     return t.type==='income'&&t.category==='前払い'&&t.date&&t.date.slice(0,7)===monthKey();
@@ -1438,8 +1442,8 @@ function viewMoney(){
         '</div>'+
         '<div class="sec-head"><span class="sec-title">参考: ラインまでの残業</span></div>'+
         '<div class="card">'+
-          '<div class="load-row"><span class="load-name">最低必要額まで</span><span class="load-meta">'+(wg.overtimeHoursToMin>0?'約'+wg.overtimeHoursToMin.toFixed(1)+'h':'届いています')+'</span></div>'+
-          '<div class="load-row"><span class="load-name">余裕ラインまで</span><span class="load-meta">'+(wg.overtimeHoursToComfort>0?'約'+wg.overtimeHoursToComfort.toFixed(1)+'h':'届いています')+'</span></div>'+
+          '<div class="load-row"><span class="load-name">最低必要額まで</span><span class="load-meta">'+(wg.amountToMin>0?yen(wg.amountToMin)+'(約'+wg.overtimeHoursToMin.toFixed(1)+'h)':'届いています')+'</span></div>'+
+          '<div class="load-row"><span class="load-name">余裕ラインまで</span><span class="load-meta">'+(wg.amountToComfort>0?yen(wg.amountToComfort)+'(約'+wg.overtimeHoursToComfort.toFixed(1)+'h)':'届いています')+'</span></div>'+
         '</div>';
     }
   }
