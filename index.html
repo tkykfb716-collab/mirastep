@@ -1087,6 +1087,69 @@ function viewProjects(){
 }
 
 function monthKey(d){d=d||new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)}
+
+/* 日本の祝日判定(固定日・ハッピーマンデー・春分/秋分・振替休日に対応) */
+function vernalEquinoxDay(y){return Math.floor(20.8431+0.242194*(y-1980))-Math.floor((y-1980)/4);}
+function autumnalEquinoxDay(y){return Math.floor(23.2488+0.242194*(y-1980))-Math.floor((y-1980)/4);}
+function nthWeekdayOfMonth(y,m,weekday,n){ // weekday: 0=日,1=月... n=第n
+  var d=new Date(y,m-1,1),count=0;
+  while(true){
+    if(d.getDay()===weekday){count++;if(count===n)return d.getDate();}
+    d.setDate(d.getDate()+1);
+    if(d.getMonth()!==m-1)return null;
+  }
+}
+function japanHolidays(y){
+  var list=[]; // {m,d}
+  list.push({m:1,d:1});
+  list.push({m:1,d:nthWeekdayOfMonth(y,1,1,2)});
+  list.push({m:2,d:11});
+  if(y>=2020)list.push({m:2,d:23});
+  list.push({m:3,d:vernalEquinoxDay(y)});
+  list.push({m:4,d:29});
+  list.push({m:5,d:3});
+  list.push({m:5,d:4});
+  list.push({m:5,d:5});
+  list.push({m:7,d:nthWeekdayOfMonth(y,7,1,3)});
+  list.push({m:8,d:11});
+  list.push({m:9,d:nthWeekdayOfMonth(y,9,1,3)});
+  list.push({m:9,d:autumnalEquinoxDay(y)});
+  list.push({m:10,d:nthWeekdayOfMonth(y,10,1,2)});
+  list.push({m:11,d:3});
+  list.push({m:11,d:23});
+  var dates=list.filter(function(x){return x.d;}).map(function(x){return new Date(y,x.m-1,x.d);});
+  // 振替休日: 祝日が日曜なら、その後の最初の非祝日平日を追加
+  var extra=[];
+  dates.forEach(function(dt){
+    if(dt.getDay()===0){
+      var sub=new Date(dt);
+      do{ sub.setDate(sub.getDate()+1); }
+      while(dates.some(function(o){return o.getTime()===sub.getTime();}));
+      extra.push(sub);
+    }
+  });
+  return dates.concat(extra);
+}
+function isJapanHoliday(date,holidayCache){
+  var y=date.getFullYear();
+  if(!holidayCache[y])holidayCache[y]=japanHolidays(y).map(function(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());});
+  var key=date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate());
+  return holidayCache[y].indexOf(key)>-1;
+}
+/* 指定した月(YYYY-MM)の平日日数を自動計算。includeHolidaysがfalseなら祝日を除く */
+function computePlannedDays(mk,includeHolidays){
+  var parts=mk.split('-'),y=+parts[0],m=+parts[1];
+  var daysInMonth=new Date(y,m,0).getDate();
+  var holidayCache={};
+  var count=0;
+  for(var d=1;d<=daysInMonth;d++){
+    var dt=new Date(y,m-1,d),dow=dt.getDay();
+    if(dow===0||dow===6) continue; // 土日は除く
+    if(!includeHolidays&&isJapanHoliday(dt,holidayCache)) continue;
+    count++;
+  }
+  return count;
+}
 function yen(n){return (n<0?'-':'')+'¥'+Math.abs(Math.round(n||0)).toLocaleString('ja-JP')}
 function nextMonthKey(){var d=new Date();d.setMonth(d.getMonth()+1);return monthKey(d);}
 function kindLabel(id){var k=EXPENSE_KINDS.filter(function(x){return x.id===id;})[0];return k?k.label:id;}
@@ -1109,19 +1172,29 @@ function sumTxns(list){return list.reduce(function(a,t){return a+(+t.amount||0);
 /* 給与見込みの計算(設定と今月の勤務入力があれば計算、なければnullを返す項目あり) */
 function computeWage(requiredAmount,minAmount,comfortLine){
   var ws=S.wageSettings;
-  var wm=S.workMonths[monthKey()];
-  var r={hasSettings:!!ws,hasWork:!!wm};
-  if(!ws||!wm) return r;
+  var wm=S.workMonths[monthKey()]||{plannedOvertimeHours:0,overtimeLogs:[],holidayWorkLogs:[],absenceLogs:[]};
+  var r={hasSettings:!!ws,hasWork:!!ws};
+  if(!ws) return r;
+  var plannedDays=computePlannedDays(monthKey(),!!ws.includeHolidays);
+  var overtimeLogs=wm.overtimeLogs||[],holidayLogs=wm.holidayWorkLogs||[],absenceLogs=wm.absenceLogs||[];
+  var unpaidCount=absenceLogs.filter(function(a){return a.type==='unpaid';}).length;
+  var paidCount=absenceLogs.filter(function(a){return a.type==='paid';}).length;
+  var workedDays=Math.max(0,plannedDays-unpaidCount-paidCount);
+  var overtimeHoursTotal=overtimeLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
+  var holidayHoursTotal=holidayLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
+
   var overtimeRateYen=ws.hourlyRate*ws.overtimeRate;
-  var normalWage=ws.hourlyRate*ws.dailyHours*(wm.workedDays||0);
-  var absenceLoss=ws.hourlyRate*ws.dailyHours*(wm.unpaidDays||0);
-  var overtimeWage=overtimeRateYen*(wm.overtimeHours||0);
-  var gross=normalWage+overtimeWage;
+  var holidayRateYen=ws.hourlyRate*(ws.holidayWorkRate||1.25);
+  var normalWage=ws.hourlyRate*ws.dailyHours*workedDays;
+  var absenceLoss=ws.hourlyRate*ws.dailyHours*unpaidCount;
+  var overtimeWage=overtimeRateYen*overtimeHoursTotal;
+  var holidayWage=holidayRateYen*holidayHoursTotal;
+  var gross=normalWage+overtimeWage+holidayWage;
   var takeHome=gross*ws.takeHomeRate;
   var shortfall=requiredAmount-takeHome; // 正=不足, 負=余剰
   var overtimeRateYenTakeHome=overtimeRateYen*ws.takeHomeRate; // 残業1hあたりの手取り増分
   var neededOvertimeHours=shortfall>0?(shortfall/overtimeRateYenTakeHome):0;
-  var remainingDays=Math.max(0,(wm.plannedDays||0)-(wm.workedDays||0));
+  var remainingDays=Math.max(0,plannedDays-workedDays);
   var dailyAvgOvertime=remainingDays>0&&neededOvertimeHours>0?(neededOvertimeHours/remainingDays):0;
 
   var minShortfallFromNormal=minAmount-(normalWage*ws.takeHomeRate);
@@ -1129,7 +1202,9 @@ function computeWage(requiredAmount,minAmount,comfortLine){
   var overtimeHoursToMin=minShortfallFromNormal>0?(minShortfallFromNormal/overtimeRateYenTakeHome):0;
   var overtimeHoursToComfort=comfortShortfallFromNormal>0?(comfortShortfallFromNormal/overtimeRateYenTakeHome):0;
 
-  r.normalWage=normalWage;r.absenceLoss=absenceLoss;r.overtimeWage=overtimeWage;
+  r.plannedDays=plannedDays;r.workedDays=workedDays;r.unpaidCount=unpaidCount;r.paidCount=paidCount;
+  r.overtimeHoursTotal=overtimeHoursTotal;r.holidayHoursTotal=holidayHoursTotal;
+  r.normalWage=normalWage;r.absenceLoss=absenceLoss;r.overtimeWage=overtimeWage;r.holidayWage=holidayWage;
   r.gross=gross;r.takeHome=takeHome;r.shortfall=shortfall;
   r.neededOvertimeHours=neededOvertimeHours;r.remainingDays=remainingDays;r.dailyAvgOvertime=dailyAvgOvertime;
   r.overtimeHoursToMin=overtimeHoursToMin;r.overtimeHoursToComfort=overtimeHoursToComfort;
@@ -1310,43 +1385,64 @@ function viewMoney(){
         '<div class="load-row" style="padding:5px 0"><span class="load-name">時給</span><span class="load-meta">'+yen(ws.hourlyRate)+'</span></div>'+
         '<div class="load-row" style="padding:5px 0"><span class="load-name">1日の所定労働時間</span><span class="load-meta">'+ws.dailyHours+'時間</span></div>'+
         '<div class="load-row" style="padding:5px 0"><span class="load-name">残業割増率</span><span class="load-meta">'+ws.overtimeRate+'倍</span></div>'+
-        '<div class="load-row" style="padding:5px 0"><span class="load-name">手取り率</span><span class="load-meta">'+Math.round(ws.takeHomeRate*100)+'%</span></div>'
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">休日出勤割増率</span><span class="load-meta">'+(ws.holidayWorkRate||1.25)+'倍</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">手取り率</span><span class="load-meta">'+Math.round(ws.takeHomeRate*100)+'%</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">祝日の扱い</span><span class="load-meta">'+(ws.includeHolidays?'出勤日に含める':'休みとして除く')+'</span></div>'
       ):'<div class="mini-empty">まだ設定されていません</div>')+
       '<button class="buffer-edit" data-editwagesettings="1" style="margin:10px 0 0">'+(ws?'設定を編集 ›':'＋ 設定する')+'</button>'+
-    '</div>'+
+    '</div>';
 
-    '<div class="sec-head"><span class="sec-title">今月の勤務('+mk+')</span></div>'+
-    '<div class="card" style="padding:14px 16px">'+
-      (wm?(
-        '<div class="load-row" style="padding:5px 0"><span class="load-name">勤務予定日数 / 予定残業</span><span class="load-meta">'+wm.plannedDays+'日 ・ '+(wm.plannedOvertimeHours||0)+'h</span></div>'+
-        '<div class="load-row" style="padding:5px 0;border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">実働日数(実績)</span><span class="load-meta">'+wm.workedDays+'日</span></div>'+
-        '<div class="load-row" style="padding:5px 0"><span class="load-name">欠勤日数</span><span class="load-meta">'+wm.unpaidDays+'日</span></div>'+
-        '<div class="load-row" style="padding:5px 0"><span class="load-name">有給日数</span><span class="load-meta">'+(wm.paidLeaveDays||0)+'日</span></div>'+
-        '<div class="load-row" style="padding:5px 0"><span class="load-name">残業時間(実績)</span><span class="load-meta">'+wm.overtimeHours+'時間</span></div>'+
-        (wg.hasSettings&&wg.advancePaid>0?('<div class="load-row" style="padding:5px 0"><span class="load-name">前払い受取済み(記録から自動集計)</span><span class="load-meta">'+yen(wg.advancePaid)+'</span></div>'):'')
-      ):'<div class="mini-empty">今月の分はまだ入力されていません</div>')+
-      '<button class="buffer-edit" data-editworkmonth="1" style="margin:10px 0 0">'+(wm?'今月の勤務を編集(実績を上書き) ›':'＋ 今月の勤務を入力')+'</button>'+
-    '</div>'+
-
-    (wg.hasSettings&&wg.hasWork?(
-      '<div class="sec-head"><span class="sec-title">給与見込み</span></div>'+
-      '<div class="card">'+
-        '<div class="load-row"><span class="load-name">通常給与</span><span class="load-meta">'+yen(wg.normalWage)+'</span></div>'+
-        (wg.absenceLoss>0?('<div class="load-row"><span class="load-name">欠勤による減少目安</span><span class="load-meta" style="color:var(--red)">-'+yen(wg.absenceLoss)+'</span></div>'):'')+
-        '<div class="load-row"><span class="load-name">残業代</span><span class="load-meta">'+yen(wg.overtimeWage)+'</span></div>'+
-        '<div class="load-row"><span class="load-name">総支給見込み</span><span class="load-meta">'+yen(wg.gross)+'</span></div>'+
-        '<div class="load-row"><span class="load-name">手取り見込み</span><span class="load-meta" style="font-weight:700;color:var(--ink)">'+yen(wg.takeHome)+'</span></div>'+
-        (wg.advancePaid>0?(
-          '<div class="load-row" style="border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">前払い受取済み</span><span class="load-meta">-'+yen(wg.advancePaid)+'</span></div>'+
-          '<div class="load-row"><span class="load-name">給料日に残り受取見込み</span><span class="load-meta" style="font-weight:700">'+yen(wg.remainingToReceive)+'</span></div>'
-        ):'')+
+  if(ws){
+    var overtimeLogs=(wm&&wm.overtimeLogs)||[],holidayLogs=(wm&&wm.holidayWorkLogs)||[],absenceLogs=(wm&&wm.absenceLogs)||[];
+    wageBody+='<div class="sec-head"><span class="sec-title">今月の勤務('+mk+')</span></div>'+
+      '<div class="card" style="padding:14px 16px">'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">勤務予定日数(平日から自動計算)</span><span class="load-meta">'+wg.plannedDays+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">予定残業時間(月合計)</span><span class="load-meta">'+((wm&&wm.plannedOvertimeHours)||0)+'h</span></div>'+
+        '<div class="load-row" style="padding:5px 0;border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">実働日数(自動計算)</span><span class="load-meta">'+wg.workedDays+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">欠勤 / 有給</span><span class="load-meta">'+wg.unpaidCount+'日 ・ '+wg.paidCount+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">残業時間合計</span><span class="load-meta">'+wg.overtimeHoursTotal+'h</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">休日出勤時間合計</span><span class="load-meta">'+wg.holidayHoursTotal+'h</span></div>'+
+        (wg.advancePaid>0?('<div class="load-row" style="padding:5px 0"><span class="load-name">前払い受取済み(記録から自動集計)</span><span class="load-meta">'+yen(wg.advancePaid)+'</span></div>'):'')+
+        '<button class="buffer-edit" data-editworkmonth="1" style="margin:10px 0 0">予定残業時間を編集 ›</button>'+
       '</div>'+
-      '<div class="sec-head"><span class="sec-title">参考: ラインまでの残業</span></div>'+
-      '<div class="card">'+
-        '<div class="load-row"><span class="load-name">最低必要額まで</span><span class="load-meta">'+(wg.overtimeHoursToMin>0?'約'+wg.overtimeHoursToMin.toFixed(1)+'h':'届いています')+'</span></div>'+
-        '<div class="load-row"><span class="load-name">余裕ラインまで</span><span class="load-meta">'+(wg.overtimeHoursToComfort>0?'約'+wg.overtimeHoursToComfort.toFixed(1)+'h':'届いています')+'</span></div>'+
-      '</div>'
-    ):'');
+
+      '<div class="add-row-pair">'+
+        '<button class="add-money-btn income" data-newovertimelog="1">＋ 残業を記録</button>'+
+        '<button class="add-money-btn income" data-newholidaylog="1">＋ 休日出勤を記録</button>'+
+      '</div>'+
+      '<div class="add-row-pair">'+
+        '<button class="add-money-btn expense" data-newabsencelog="1" style="flex:1">＋ 休みを記録(有給/欠勤)</button>'+
+      '</div>'+
+
+      (overtimeLogs.length||holidayLogs.length||absenceLogs.length?(
+        '<div class="card">'+
+          overtimeLogs.map(function(l){return '<div class="txn-row"><div class="txn-main"><div class="txn-name">🔁 残業 '+l.hours+'h</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div><button class="del" data-delovertimelog="'+l.id+'">×</button></div>';}).join('')+
+          holidayLogs.map(function(l){return '<div class="txn-row"><div class="txn-main"><div class="txn-name">🗓️ 休日出勤 '+l.hours+'h</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div><button class="del" data-delholidaylog="'+l.id+'">×</button></div>';}).join('')+
+          absenceLogs.map(function(l){return '<div class="txn-row"><div class="txn-main"><div class="txn-name">'+(l.type==='paid'?'🟢 有給':'🔴 欠勤')+'</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div><button class="del" data-delabsencelog="'+l.id+'">×</button></div>';}).join('')+
+        '</div>'
+      ):'');
+
+    if(wg.hasWork){
+      wageBody+='<div class="sec-head"><span class="sec-title">給与見込み</span></div>'+
+        '<div class="card">'+
+          '<div class="load-row"><span class="load-name">通常給与</span><span class="load-meta">'+yen(wg.normalWage)+'</span></div>'+
+          (wg.absenceLoss>0?('<div class="load-row"><span class="load-name">欠勤による減少目安</span><span class="load-meta" style="color:var(--red)">-'+yen(wg.absenceLoss)+'</span></div>'):'')+
+          '<div class="load-row"><span class="load-name">残業代</span><span class="load-meta">'+yen(wg.overtimeWage)+'</span></div>'+
+          (wg.holidayWage>0?('<div class="load-row"><span class="load-name">休日出勤代</span><span class="load-meta">'+yen(wg.holidayWage)+'</span></div>'):'')+
+          '<div class="load-row"><span class="load-name">総支給見込み</span><span class="load-meta">'+yen(wg.gross)+'</span></div>'+
+          '<div class="load-row"><span class="load-name">手取り見込み</span><span class="load-meta" style="font-weight:700;color:var(--ink)">'+yen(wg.takeHome)+'</span></div>'+
+          (wg.advancePaid>0?(
+            '<div class="load-row" style="border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">前払い受取済み</span><span class="load-meta">-'+yen(wg.advancePaid)+'</span></div>'+
+            '<div class="load-row"><span class="load-name">給料日に残り受取見込み</span><span class="load-meta" style="font-weight:700">'+yen(wg.remainingToReceive)+'</span></div>'
+          ):'')+
+        '</div>'+
+        '<div class="sec-head"><span class="sec-title">参考: ラインまでの残業</span></div>'+
+        '<div class="card">'+
+          '<div class="load-row"><span class="load-name">最低必要額まで</span><span class="load-meta">'+(wg.overtimeHoursToMin>0?'約'+wg.overtimeHoursToMin.toFixed(1)+'h':'届いています')+'</span></div>'+
+          '<div class="load-row"><span class="load-name">余裕ラインまで</span><span class="load-meta">'+(wg.overtimeHoursToComfort>0?'約'+wg.overtimeHoursToComfort.toFixed(1)+'h':'届いています')+'</span></div>'+
+        '</div>';
+    }
+  }
 
   return headline+
     '<div class="chips" style="margin-top:14px">'+viewChips+'</div>'+
@@ -1520,25 +1616,37 @@ function sheetHTML(){
       '<div class="f"><label>時給</label><input id="i-num1" type="number" inputmode="numeric" value="'+(s.num1||'')+'" placeholder="例: 1700"><div class="err" id="e-title"></div></div>'+
       '<div class="f"><label>1日の所定労働時間</label><input id="i-num2" type="number" inputmode="decimal" value="'+(s.num2||'')+'" placeholder="例: 8"></div>'+
       '<div class="f"><label>残業割増率</label><input id="i-num3" type="number" inputmode="decimal" step="0.01" value="'+(s.num3||'')+'" placeholder="例: 1.25"></div>'+
-      '<div class="f"><label>手取り率(%)</label><input id="i-num4" type="number" inputmode="numeric" value="'+(s.num4||'')+'" placeholder="例: 80"></div>';
+      '<div class="f"><label>休日出勤割増率</label><input id="i-num5" type="number" inputmode="decimal" step="0.01" value="'+(s.num5||'')+'" placeholder="例: 1.25"></div>'+
+      '<div class="f"><label>手取り率(%)</label><input id="i-num4" type="number" inputmode="numeric" value="'+(s.num4||'')+'" placeholder="例: 80"></div>'+
+      '<div class="f"><label>勤務予定日数の数え方</label><div class="opts">'+
+        '<button class="opt '+(!s.includeHolidays?'on':'')+'" data-pick="includeHolidays|" style="'+(!s.includeHolidays?'color:var(--blue);background:var(--blue-soft)':'')+'">祝日は休みとして除く</button>'+
+        '<button class="opt '+(s.includeHolidays?'on':'')+'" data-pick="includeHolidays|1" style="'+(s.includeHolidays?'color:var(--blue);background:var(--blue-soft)':'')+'">祝日も出勤日に含める</button>'+
+      '</div></div>';
   } else if(s.type==='workmonth'){
-    var pace=(s.num1&&s.num2)?(parseFloat(s.num2)/parseFloat(s.num1)):null;
-    inner='<h2>今月の勤務('+monthKey()+')</h2>'+
-      '<div style="font-size:11.5px;color:var(--ink-3);margin-bottom:10px;line-height:1.6">月初の「予定」を目安にして、実際の状況が変わったらそのつど「実績」欄を今の数字に書き換えてください。</div>'+
-      '<div class="f"><label>勤務予定日数</label><input id="i-num1" type="number" inputmode="numeric" value="'+(s.num1||'')+'" placeholder="例: 21"><div class="err" id="e-title"></div></div>'+
-      '<div class="f"><label>予定残業時間(月合計)</label><input id="i-num2" type="number" inputmode="decimal" value="'+(s.num2||'')+'" placeholder="例: 20"></div>'+
-      (pace?('<div style="font-size:11px;color:var(--ink-3);margin:-8px 2px 12px">1日あたり目安: 約'+pace.toFixed(1)+'時間/日</div>'):'')+
-      '<div class="f"><label>実働日数(実績・上書き)</label><input id="i-num3" type="number" inputmode="numeric" value="'+(s.num3||'')+'" placeholder="例: 12"></div>'+
-      '<div class="f"><label>欠勤日数</label><input id="i-num4" type="number" inputmode="numeric" value="'+(s.num4||'')+'" placeholder="例: 0"></div>'+
-      '<div class="f"><label>有給日数(給与は減りません)</label><input id="i-num5" type="number" inputmode="numeric" value="'+(s.num5||'')+'" placeholder="例: 0"></div>'+
-      '<div class="f"><label>残業時間(実績・上書き)</label><input id="i-num6" type="number" inputmode="decimal" value="'+(s.num6||'')+'" placeholder="例: 8"></div>'+
-      '<div style="font-size:11px;color:var(--ink-3);margin-top:-4px;line-height:1.6">前払いは「記録」タブでカテゴリ「前払い」の収入として登録すると、ここに自動反映されます。</div>';
+    inner='<h2>予定残業時間('+monthKey()+')</h2>'+
+      '<div style="font-size:11.5px;color:var(--ink-3);margin-bottom:10px;line-height:1.6">勤務予定日数は平日から自動計算されます。ここでは月初に見込む残業時間の合計だけ入れてください。</div>'+
+      '<div class="f"><label>予定残業時間(月合計)</label><input id="i-num2" type="number" inputmode="decimal" value="'+(s.num2||'')+'" placeholder="例: 20"><div class="err" id="e-title"></div></div>';
+  } else if(s.type==='overtimelog'){
+    inner='<h2>残業を記録</h2>'+
+      '<div class="f"><label>時間</label><input id="i-num1" type="number" inputmode="decimal" value="'+(s.num1||'')+'" placeholder="例: 2"><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 9/10分"></div>';
+  } else if(s.type==='holidaylog'){
+    inner='<h2>休日出勤を記録</h2>'+
+      '<div class="f"><label>時間</label><input id="i-num1" type="number" inputmode="decimal" value="'+(s.num1||'')+'" placeholder="例: 6"><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 9/14出勤"></div>';
+  } else if(s.type==='absencelog'){
+    inner='<h2>休みを記録</h2>'+
+      '<div class="f"><label>種類</label><div class="opts">'+
+        '<button class="opt '+(s.absenceType==='paid'?'on':'')+'" data-pick="absenceType|paid" style="'+(s.absenceType==='paid'?'color:var(--blue);background:var(--blue-soft)':'')+'">有給</button>'+
+        '<button class="opt '+(s.absenceType==='unpaid'?'on':'')+'" data-pick="absenceType|unpaid" style="'+(s.absenceType==='unpaid'?'color:var(--blue);background:var(--blue-soft)':'')+'">欠勤</button>'+
+      '</div><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 9/12"></div>';
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
       ((s.id&&s.type!=='sub')||(s.type==='weektheme'&&s.existing)?'<button class="btn dan" id="b-del">削除</button>':'')+
       '<button class="btn" id="b-cancel">キャンセル</button>'+
-      '<button class="btn pri" id="b-ok">'+(['weektheme','buffer','wagesettings','workmonth'].indexOf(s.type)>-1?'保存':(s.id?'保存':'追加'))+'</button>'+
+      '<button class="btn pri" id="b-ok">'+(['weektheme','buffer','wagesettings','workmonth','overtimelog','holidaylog','absencelog'].indexOf(s.type)>-1?'保存':(s.id?'保存':'追加'))+'</button>'+
     '</div></div></div>';
 }
 
@@ -1637,16 +1745,39 @@ function bind(){
   q('[data-editwagesettings]',function(el){el.onclick=function(){
     var ws=S.wageSettings;
     S.sheet={type:'wagesettings',id:null,
-      num1:ws?ws.hourlyRate:'',num2:ws?ws.dailyHours:'',num3:ws?ws.overtimeRate:'',num4:ws?Math.round(ws.takeHomeRate*100):''};
+      num1:ws?ws.hourlyRate:'',num2:ws?ws.dailyHours:'',num3:ws?ws.overtimeRate:'',
+      num4:ws?Math.round(ws.takeHomeRate*100):'',num5:ws?ws.holidayWorkRate:'',
+      includeHolidays:ws?!!ws.includeHolidays:false};
     render();
   }});
   q('[data-editworkmonth]',function(el){el.onclick=function(){
     var wm=S.workMonths[monthKey()];
-    S.sheet={type:'workmonth',id:null,
-      num1:wm?wm.plannedDays:'',num2:wm?wm.plannedOvertimeHours:'',
-      num3:wm?wm.workedDays:'',num4:wm?wm.unpaidDays:'',num5:wm?wm.paidLeaveDays:'',
-      num6:wm?wm.overtimeHours:''};
+    S.sheet={type:'workmonth',id:null,num2:wm?wm.plannedOvertimeHours:''};
     render();
+  }});
+  q('[data-newovertimelog]',function(el){el.onclick=function(){
+    S.sheet={type:'overtimelog',id:null,num1:'',title:''};render();
+  }});
+  q('[data-newholidaylog]',function(el){el.onclick=function(){
+    S.sheet={type:'holidaylog',id:null,num1:'',title:''};render();
+  }});
+  q('[data-newabsencelog]',function(el){el.onclick=function(){
+    S.sheet={type:'absencelog',id:null,absenceType:'paid',title:''};render();
+  }});
+  q('[data-delovertimelog]',function(el){el.onclick=function(){
+    var wm=S.workMonths[monthKey()];if(!wm)return;
+    wm.overtimeLogs=(wm.overtimeLogs||[]).filter(function(x){return x.id!==el.dataset.delovertimelog;});
+    save();render();
+  }});
+  q('[data-delholidaylog]',function(el){el.onclick=function(){
+    var wm=S.workMonths[monthKey()];if(!wm)return;
+    wm.holidayWorkLogs=(wm.holidayWorkLogs||[]).filter(function(x){return x.id!==el.dataset.delholidaylog;});
+    save();render();
+  }});
+  q('[data-delabsencelog]',function(el){el.onclick=function(){
+    var wm=S.workMonths[monthKey()];if(!wm)return;
+    wm.absenceLogs=(wm.absenceLogs||[]).filter(function(x){return x.id!==el.dataset.delabsencelog;});
+    save();render();
   }});
   q('[data-movetask]',function(el){el.onclick=function(){
     var list=todayTasks(),id=el.dataset.movetask,dir=parseInt(el.dataset.move,10);
@@ -1785,30 +1916,44 @@ function submit(){
     S.sheet=null;save();render();return;
   }
   if(s.type==='wagesettings'){
-    var hr=parseFloat(s.num1),dh=parseFloat(s.num2),ot=parseFloat(s.num3),tr=parseFloat(s.num4);
+    var hr=parseFloat(s.num1),dh=parseFloat(s.num2),ot=parseFloat(s.num3),tr=parseFloat(s.num4),hw=parseFloat(s.num5);
     var errW=document.getElementById('e-title');
     if(!hr||hr<=0||isNaN(hr)){ if(errW)errW.textContent='時給を入力してください'; return; }
     S.wageSettings={
       hourlyRate:hr,
       dailyHours:(!dh||isNaN(dh))?8:dh,
       overtimeRate:(!ot||isNaN(ot))?1.25:ot,
-      takeHomeRate:(!tr||isNaN(tr))?0.8:(tr/100)
+      holidayWorkRate:(!hw||isNaN(hw))?1.25:hw,
+      takeHomeRate:(!tr||isNaN(tr))?0.8:(tr/100),
+      includeHolidays:!!s.includeHolidays
     };
     S.sheet=null;save();render();return;
   }
   if(s.type==='workmonth'){
-    var pd=parseFloat(s.num1),pot=parseFloat(s.num2),wd=parseFloat(s.num3),
-        ud=parseFloat(s.num4),pld=parseFloat(s.num5),oh=parseFloat(s.num6);
-    var errM=document.getElementById('e-title');
-    if(isNaN(pd)||pd<=0){ if(errM)errM.textContent='勤務予定日数を入力してください'; return; }
-    S.workMonths[monthKey()]={
-      plannedDays:pd,
-      plannedOvertimeHours:isNaN(pot)?0:pot,
-      workedDays:isNaN(wd)?0:wd,
-      unpaidDays:isNaN(ud)?0:ud,
-      paidLeaveDays:isNaN(pld)?0:pld,
-      overtimeHours:isNaN(oh)?0:oh
-    };
+    var pot=parseFloat(s.num2);
+    var mk0=monthKey();
+    if(!S.workMonths[mk0]) S.workMonths[mk0]={plannedOvertimeHours:0,overtimeLogs:[],holidayWorkLogs:[],absenceLogs:[]};
+    S.workMonths[mk0].plannedOvertimeHours=isNaN(pot)?0:pot;
+    S.sheet=null;save();render();return;
+  }
+  if(s.type==='overtimelog'||s.type==='holidaylog'){
+    var hrs=parseFloat(s.num1);
+    var errL=document.getElementById('e-title');
+    if(!hrs||hrs<=0||isNaN(hrs)){ if(errL)errL.textContent='時間を入力してください'; return; }
+    var mk1=monthKey();
+    if(!S.workMonths[mk1]) S.workMonths[mk1]={plannedOvertimeHours:0,overtimeLogs:[],holidayWorkLogs:[],absenceLogs:[]};
+    var arrKey=s.type==='overtimelog'?'overtimeLogs':'holidayWorkLogs';
+    if(!S.workMonths[mk1][arrKey]) S.workMonths[mk1][arrKey]=[];
+    S.workMonths[mk1][arrKey].push({id:g(),hours:hrs,note:(s.title||'').trim()});
+    S.sheet=null;save();render();return;
+  }
+  if(s.type==='absencelog'){
+    var errA=document.getElementById('e-title');
+    if(!s.absenceType){ if(errA)errA.textContent='有給か欠勤かを選んでください'; return; }
+    var mk2=monthKey();
+    if(!S.workMonths[mk2]) S.workMonths[mk2]={plannedOvertimeHours:0,overtimeLogs:[],holidayWorkLogs:[],absenceLogs:[]};
+    if(!S.workMonths[mk2].absenceLogs) S.workMonths[mk2].absenceLogs=[];
+    S.workMonths[mk2].absenceLogs.push({id:g(),type:s.absenceType,note:(s.title||'').trim()});
     S.sheet=null;save();render();return;
   }
   if(s.type==='txn'){
