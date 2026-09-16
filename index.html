@@ -501,7 +501,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[]};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -535,7 +535,7 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths,fixedCostTemplates:S.fixedCostTemplates,templatesSeeded:S.templatesSeeded});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths,fixedCostTemplates:S.fixedCostTemplates,templatesSeeded:S.templatesSeeded,plannedExpenses:S.plannedExpenses});
 }
 function apply(str){
   var d=JSON.parse(str);
@@ -550,6 +550,7 @@ function apply(str){
   S.workMonths=d.workMonths||{};
   S.fixedCostTemplates=d.fixedCostTemplates||[];
   S.templatesSeeded=!!d.templatesSeeded;
+  S.plannedExpenses=d.plannedExpenses||[];
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -1336,7 +1337,8 @@ function viewMoney(){
   var nmk=nextMonthKey();
   var nextTxns=S.transactions.filter(function(t){return t.date&&t.date.slice(0,7)===nmk;});
   var nextIrregular=sumTxns(nextTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='irregular';}));
-  var nextRequired=monthlyMin+nextIrregular;
+  var nextPlanned=sumTxns(S.plannedExpenses.filter(function(p){return p.dueDate&&p.dueDate.slice(0,7)===nmk;}).map(function(p){return {amount:p.amount};}));
+  var nextRequired=monthlyMin+nextIrregular+nextPlanned;
   var nextIncomeEntered=sumTxns(nextTxns.filter(function(t){return t.type==='income';}));
   var hasNextIncome=nextTxns.some(function(t){return t.type==='income';});
   var nextShortfall=hasNextIncome?(nextIncomeEntered-nextRequired):null;
@@ -1351,7 +1353,8 @@ function viewMoney(){
   var viewChips='<button class="chip '+(moneyView==='analysis'?'on':'')+'" data-moneyview="analysis">分析</button>'+
     '<button class="chip '+(moneyView==='record'?'on':'')+'" data-moneyview="record">記録</button>'+
     '<button class="chip '+(moneyView==='wage'?'on':'')+'" data-moneyview="wage">給与</button>'+
-    '<button class="chip '+(moneyView==='fixed'?'on':'')+'" data-moneyview="fixed">固定費</button>';
+    '<button class="chip '+(moneyView==='fixed'?'on':'')+'" data-moneyview="fixed">固定費</button>'+
+    '<button class="chip '+(moneyView==='planned'?'on':'')+'" data-moneyview="planned">予定支出</button>';
 
   var wg=computeWage(monthKey(),thisRequired,monthlyMin,comfortLine);
   var moneyMonth=S.moneyMonth||monthKey();
@@ -1395,9 +1398,10 @@ function viewMoney(){
       '<div class="load-row"><span class="load-name">変動費(平均)</span><span class="load-meta">'+yen(avgVariable)+'</span></div>'+
       '<div class="load-row"><span class="load-name">サブスク(平均)</span><span class="load-meta">'+yen(avgSub)+'</span></div>'+
       '<div class="load-row"><span class="load-name">借入返済(平均)</span><span class="load-meta">'+yen(avgLoan)+'</span></div>'+
-      (nextIrregular>0?('<div class="load-row"><span class="load-name">来月分の臨時支出</span><span class="load-meta">'+yen(nextIrregular)+'</span></div>'):'')+
+      (nextIrregular>0?('<div class="load-row"><span class="load-name">来月分の臨時支出(記録済み)</span><span class="load-meta">'+yen(nextIrregular)+'</span></div>'):'')+
+      (nextPlanned>0?('<div class="load-row"><span class="load-name">来月分の支出予定</span><span class="load-meta">'+yen(nextPlanned)+'</span></div>'):'')+
     '</div>'+
-    '<div style="font-size:11.5px;color:var(--ink-3);margin:0 2px 4px;line-height:1.6">固定費・変動費・サブスク・借入返済は直近最大3ヶ月の実績平均から算出。来月分の臨時支出は、あらかじめ来月の日付で登録した分だけ反映されます。</div>';
+    '<div style="font-size:11.5px;color:var(--ink-3);margin:0 2px 4px;line-height:1.6">固定費・変動費・サブスク・借入返済は直近最大3ヶ月の実績平均(登録済みなら固定費タブの金額)から算出。臨時支出は来月の日付で記録済みのもの、支出予定は「予定支出」タブで来月分として登録したものを反映しています。</div>';
 
   var moneyFilter=S.moneyFilter||'all';
   var filterChips='<button class="chip '+(moneyFilter==='all'?'on':'')+'" data-moneyf="all">すべて</button>'+
@@ -1564,9 +1568,41 @@ function viewMoney(){
     '</div>'+
     '<div class="add-row-pair"><button class="add-money-btn income" data-new="fixedtemplate" style="flex:1">＋ 固定費・サブスク・借入を登録</button></div>';
 
+  var todayD0=todayKey();
+  var upcoming=S.plannedExpenses.filter(function(p){return p.dueDate>=todayD0;}).slice().sort(function(a,b){return a.dueDate<b.dueDate?-1:1;});
+  var past=S.plannedExpenses.filter(function(p){return p.dueDate<todayD0;}).slice().sort(function(a,b){return a.dueDate<b.dueDate?1:-1;});
+  var upcomingTotal=sumTxns(upcoming.map(function(p){return {amount:p.amount};}));
+  var plannedKindLabel={fixed:'固定費',variable:'変動費',subscription:'サブスク',loan:'借入返済',irregular:'臨時支出',overdue:'遅延・未払い'};
+  function plannedRow(p){
+    var due=daysUntil(p.dueDate);
+    var cls=due<0?'over':due<=14?'soon':'ok';
+    var label=due<0?'期限切れ':due===0?'今日':'あと'+due+'日';
+    var md=new Date(p.dueDate+'T00:00:00');
+    return '<div class="txn-row" data-editplanned="'+p.id+'">'+
+      '<div class="txn-main"><div class="txn-name">'+esc(p.name)+'</div>'+
+        '<div class="txn-sub">'+(md.getMonth()+1)+'/'+md.getDate()+' ・ '+esc(p.category)+(p.scope==='mirasute'?' ・ ミラステ':'')+'</div></div>'+
+      '<span class="proj-due '+cls+'" style="margin-right:8px">'+label+'</span>'+
+      '<div class="txn-amount">'+yen(p.amount)+'</div>'+
+      '<button class="del" data-delplanned="'+p.id+'">×</button>'+
+    '</div>';
+  }
+  var plannedBody='<div class="sec-head"><span class="sec-title">今後の支払い予定</span></div>'+
+    '<div class="card accent" style="--accent-c:var(--amber)">'+
+      '<div class="need-row"><span class="need-label">未来の支出予定 合計</span><span class="need-num">'+yen(upcomingTotal)+'</span></div>'+
+    '</div>'+
+    '<div style="font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6">ボーナス払い・車検・お年玉など、毎月ではないけど決まって発生する支出を先に登録しておけます。支払月の予測(来月必要見込み)にも自動で反映されます。実際に払ったら「記録に追加」で取引化できます。</div>'+
+    '<div class="card">'+
+      (upcoming.length?upcoming.map(plannedRow).join(''):'<div class="empty">予定はまだありません。</div>')+
+    '</div>'+
+    '<div class="add-row-pair"><button class="add-money-btn income" data-new="plannedexpense" style="flex:1">＋ 支出予定を登録</button></div>'+
+    (past.length?(
+      '<div class="sec-head"><span class="sec-title">期限切れ(未対応)</span></div>'+
+      '<div class="card">'+past.map(plannedRow).join('')+'</div>'
+    ):'');
+
   return headline+
     '<div class="chips" style="margin-top:14px">'+viewChips+'</div>'+
-    (moneyView==='analysis'?analysisBody:moneyView==='wage'?wageBody:moneyView==='fixed'?fixedBody:recordBody)+
+    (moneyView==='analysis'?analysisBody:moneyView==='wage'?wageBody:moneyView==='fixed'?fixedBody:moneyView==='planned'?plannedBody:recordBody)+
     '<div class="footer-quote">"今の状態を、冷静に見える化する。"</div>';
 }
 
@@ -1775,6 +1811,19 @@ function sheetHTML(){
         '<button class="opt '+(s.scope==='mirasute'?'on':'')+'" data-pick="scope|mirasute" style="'+(s.scope==='mirasute'?'color:var(--purple);background:var(--purple-soft)':'')+'">ミラステ</button>'+
       '</div></div>'+
       '<div class="f"><label>支払日(任意・毎月何日)</label><input id="i-num2" type="number" inputmode="numeric" min="1" max="31" value="'+(s.num2||'')+'" placeholder="例: 27"></div>';
+  } else if(s.type==='plannedexpense'){
+    inner='<h2>'+(s.id?'支出予定を編集':'支出予定を登録')+'</h2>'+
+      '<div class="f"><label>名前</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 車検・お年玉・ボーナス払い"><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>金額</label><input id="i-num1" type="number" inputmode="numeric" value="'+(s.num1||'')+'" placeholder="例: 120000"></div>'+
+      '<div class="f"><label>支払予定日</label><input id="i-tdate" type="date" value="'+(s.txnDate||'')+'"></div>'+
+      '<div class="f"><label>カテゴリ</label><div class="opts">'+
+        EXPENSE_CATS.map(function(c){return '<button class="opt '+(s.category===c?'on':'')+'" data-pick="category|'+c+'" style="'+(s.category===c?'color:var(--blue);background:var(--blue-soft)':'')+'">'+c+'</button>';}).join('')+
+      '</div></div>'+
+      '<div class="f"><label>個人 / ミラステ</label><div class="opts">'+
+        '<button class="opt '+(s.scope==='personal'?'on':'')+'" data-pick="scope|personal" style="'+(s.scope==='personal'?'color:var(--blue);background:var(--blue-soft)':'')+'">個人</button>'+
+        '<button class="opt '+(s.scope==='mirasute'?'on':'')+'" data-pick="scope|mirasute" style="'+(s.scope==='mirasute'?'color:var(--purple);background:var(--purple-soft)':'')+'">ミラステ</button>'+
+      '</div></div>'+
+      '<div class="f"><label>メモ(任意)</label><textarea id="i-note" placeholder="詳細など">'+esc(s.note||'')+'</textarea></div>';
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
@@ -1914,6 +1963,16 @@ function bind(){
     S.fixedCostTemplates=S.fixedCostTemplates.filter(function(x){return x.id!==el.dataset.deltemplate;});
     save();render();
   }});
+  q('[data-editplanned]',function(el){el.onclick=function(){
+    var p=find(S.plannedExpenses,el.dataset.editplanned);if(!p)return;
+    S.sheet={type:'plannedexpense',id:p.id,title:p.name,num1:p.amount,txnDate:p.dueDate,category:p.category,scope:p.scope,note:p.note||''};
+    render();
+  }});
+  q('[data-delplanned]',function(el){el.onclick=function(e){
+    e.stopPropagation();
+    S.plannedExpenses=S.plannedExpenses.filter(function(x){return x.id!==el.dataset.delplanned;});
+    save();render();
+  }});
   q('[data-delovertimelog]',function(el){el.onclick=function(){
     var wm=S.workMonths[monthKey()];if(!wm)return;
     wm.overtimeLogs=(wm.overtimeLogs||[]).filter(function(x){return x.id!==el.dataset.delovertimelog;});
@@ -2006,6 +2065,7 @@ function bind(){
     if(k==='cat')S.sheet={type:'cat',id:null,title:'',colorIdx:S.cats.length%CAT_PALETTE.length};
     if(k==='income'||k==='expense')S.sheet={type:'txn',id:null,txnType:k,title:'',amount:'',txnDate:todayKey(),category:'',scope:'personal',expenseKind:'variable',courseId:'',note:''};
     if(k==='fixedtemplate')S.sheet={type:'fixedtemplate',id:null,title:'',num1:'',kind:'fixed',scope:'personal',num2:''};
+    if(k==='plannedexpense')S.sheet={type:'plannedexpense',id:null,title:'',num1:'',txnDate:'',category:'',scope:'personal',note:''};
     render();
   }});
 
@@ -2119,6 +2179,18 @@ function submit(){
     else S.fixedCostTemplates.push(rec2);
     S.sheet=null;save();render();return;
   }
+  if(s.type==='plannedexpense'){
+    var peAmt=parseFloat(s.num1);
+    var peName=(s.title||'').trim();
+    var errP=document.getElementById('e-title');
+    if(!peName){ if(errP)errP.textContent='名前を入力してください'; return; }
+    if(!peAmt||peAmt<=0||isNaN(peAmt)){ if(errP)errP.textContent='金額を入力してください'; return; }
+    if(!s.txnDate){ if(errP)errP.textContent='支払予定日を入力してください'; return; }
+    var rec3={id:s.id||g(),name:peName,amount:peAmt,dueDate:s.txnDate,category:s.category||'その他',scope:s.scope||'personal',note:(s.note||'').trim()};
+    if(s.id){ var idxP=S.plannedExpenses.findIndex(function(x){return x.id===s.id;}); if(idxP>-1)S.plannedExpenses[idxP]=rec3; }
+    else S.plannedExpenses.push(rec3);
+    S.sheet=null;save();render();return;
+  }
   if(s.type==='txn'){
     var amt=parseFloat(s.amount);
     var tTitle=(s.title||'').trim();
@@ -2169,6 +2241,8 @@ function doDelete(){
   if(s.type==='proj')S.projects=S.projects.filter(function(x){return x.id!==s.id});
   if(s.type==='weektheme')delete S.weekNotes[currentWeekPeriod().monday];
   if(s.type==='txn')S.transactions=S.transactions.filter(function(x){return x.id!==s.id});
+  if(s.type==='fixedtemplate')S.fixedCostTemplates=S.fixedCostTemplates.filter(function(x){return x.id!==s.id});
+  if(s.type==='plannedexpense')S.plannedExpenses=S.plannedExpenses.filter(function(x){return x.id!==s.id});
   S.sheet=null;save();render();
 }
 
