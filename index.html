@@ -188,6 +188,14 @@ body{
 .need-num{font-family:'Zen Maru Gothic',sans-serif;font-size:17px;font-weight:700;color:var(--ink)}
 .need-divider{border-top:1px solid var(--line-soft);margin:2px 16px}
 .need-note{font-size:11.5px;color:var(--ink-3);padding:6px 16px 2px;line-height:1.6}
+.home-theme{
+  background:linear-gradient(135deg,#fff8f2,#fdeceb);
+  border:1px solid var(--line-soft);border-radius:14px;
+  padding:12px 16px;margin:0 0 12px;cursor:pointer;
+}
+.home-theme.empty{background:#fafbfd}
+.ht-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;letter-spacing:.03em}
+.ht-text{font-size:14px;font-weight:600;color:var(--ink);line-height:1.6}
 .month-switch{display:flex;align-items:center;justify-content:center;gap:14px;padding:6px 0 10px}
 .ms-btn{
   width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:#fff;
@@ -501,7 +509,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[]};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','upcoming','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[],foodTemplateSeeded:false};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -535,15 +543,16 @@ try{
 }catch(e){ fsReady=false; S.cloudError='初期化エラー: '+(e&&e.message||e); }
 
 function payload(){
-  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths,fixedCostTemplates:S.fixedCostTemplates,templatesSeeded:S.templatesSeeded,plannedExpenses:S.plannedExpenses});
+  return JSON.stringify({tasks:S.tasks,goals:S.goals,projects:S.projects,log:S.log,userName:S.userName,updatedAt:S.updatedAt,weekNotes:S.weekNotes,cats:S.cats,homeOrder:S.homeOrder,transactions:S.transactions,comfortBuffer:S.comfortBuffer,wageSettings:S.wageSettings,workMonths:S.workMonths,fixedCostTemplates:S.fixedCostTemplates,templatesSeeded:S.templatesSeeded,plannedExpenses:S.plannedExpenses,foodTemplateSeeded:S.foodTemplateSeeded});
 }
 function apply(str){
   var d=JSON.parse(str);
   S.tasks=d.tasks||[];S.goals=d.goals||[];S.projects=d.projects||[];S.log=d.log||{};
   S.weekNotes=d.weekNotes||{};
   S.cats=(d.cats&&d.cats.length)?d.cats:DEFAULT_CATS.slice();
-  S.homeOrder=(d.homeOrder&&d.homeOrder.length)?d.homeOrder:['today','goals','week','projects','money','review'];
+  S.homeOrder=(d.homeOrder&&d.homeOrder.length)?d.homeOrder:['today','goals','week','projects','money','upcoming','review'];
   if(S.homeOrder.indexOf('money')===-1) S.homeOrder.push('money');
+  if(S.homeOrder.indexOf('upcoming')===-1) S.homeOrder.push('upcoming');
   S.transactions=d.transactions||[];
   S.comfortBuffer=d.comfortBuffer||0;
   S.wageSettings=d.wageSettings||null;
@@ -551,6 +560,7 @@ function apply(str){
   S.fixedCostTemplates=d.fixedCostTemplates||[];
   S.templatesSeeded=!!d.templatesSeeded;
   S.plannedExpenses=d.plannedExpenses||[];
+  S.foodTemplateSeeded=!!d.foodTemplateSeeded;
   if(d.userName)S.userName=d.userName;
   S.updatedAt=d.updatedAt||0;
 }
@@ -570,6 +580,7 @@ async function load(){
 
   var remoteExisted=await reconcileCloud(); // クラウドの方が新しければ、繰り越し処理より先に取り込む
   seedInitialTemplates(); // 初回のみ: 記録済みのサブスク・借入返済をテンプレートとして登録
+  seedFoodTemplate(); // 初回のみ: 食費を固定費として登録
 
   rollTasks(); // ここでようやく繰り越し(必要なら内部でsave()される)
   render();
@@ -696,6 +707,18 @@ function rollTasks(){
 /* ---------- ヘルパ ---------- */
 function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
 function att(s){return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
+function hourSelectOptions(selected){
+  var opts=['<option value="">選択してください</option>'];
+  for(var q=1;q<=48;q++){ // 15分刻みで最大12時間
+    var h=q*0.25;
+    var v=(Math.round(h*100)/100).toString();
+    var hh=Math.floor(h),mm=Math.round((h-hh)*60);
+    var label=(hh>0?hh+'時間':'')+(mm>0?mm+'分':'');
+    var sel=(String(selected)===v||Math.abs(parseFloat(selected)-h)<0.001)?' selected':'';
+    opts.push('<option value="'+v+'"'+sel+'>'+label+'</option>');
+  }
+  return opts.join('');
+}
 function cat(id){for(var i=0;i<S.cats.length;i++)if(S.cats[i].id===id)return S.cats[i];return S.cats[0]}
 function hz(id){for(var i=0;i<HORIZONS.length;i++)if(HORIZONS[i].id===id)return HORIZONS[i];return HORIZONS[0]}
 function jpDate(d){
@@ -837,6 +860,14 @@ function seedInitialTemplates(){
   save();
 }
 
+/* 一度だけ実行: 食費を固定費として登録 */
+function seedFoodTemplate(){
+  if(S.foodTemplateSeeded) return;
+  S.foodTemplateSeeded=true;
+  S.fixedCostTemplates.push({id:g(),name:'食費',amount:50000,kind:'fixed',scope:'personal',dayOfMonth:null});
+  save();
+}
+
 function ladderConnector(colorFrom,colorTo){
   return '<div class="ladder-connector">'+
     '<div class="lc-line" style="background:linear-gradient(to bottom,'+colorFrom+','+colorTo+')"></div>'+
@@ -897,6 +928,29 @@ function viewHome(){
   var mIncome=monthTxns.filter(function(t){return t.type==='income';}).reduce(function(a,t){return a+(+t.amount||0);},0);
   var mExpense=monthTxns.filter(function(t){return t.type==='expense';}).reduce(function(a,t){return a+(+t.amount||0);},0);
   var mNet=mIncome-mExpense;
+  var homeTheme=S.weekNotes[currentWeekPeriod().monday]||'';
+
+  // 変動費の予算と、今月すでに使った変動費(残り予算の計算用)
+  var varBudget=sumTxns(S.fixedCostTemplates.filter(function(t){return t.kind==='variable';}).map(function(t){return {amount:t.amount};}));
+  var varSpent=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='variable';}));
+  var varRemaining=varBudget-varSpent;
+
+  // 支払日が近いもの(固定費テンプレートの支払日 + 予定支出)を14日先まで
+  var todayD=new Date(),todayDay=todayD.getDate();
+  var daysInThisMonth=new Date(todayD.getFullYear(),todayD.getMonth()+1,0).getDate();
+  var upcomingPays=[];
+  S.fixedCostTemplates.forEach(function(t){
+    if(!t.dayOfMonth)return;
+    var diff=t.dayOfMonth-todayDay;
+    if(diff<0) diff+=daysInThisMonth; // 今月分が過ぎていれば来月分として扱う
+    if(diff<=14) upcomingPays.push({name:t.name,amount:t.amount,days:diff});
+  });
+  S.plannedExpenses.forEach(function(p){
+    if(!p.dueDate)return;
+    var d=daysUntil(p.dueDate);
+    if(d>=0&&d<=14) upcomingPays.push({name:p.name,amount:p.amount,days:d});
+  });
+  upcomingPays.sort(function(a,b){return a.days-b.days;});
 
   var wk=weekDays(),wsum=wk.reduce(function(a,b){return a+b.n;},0);
   var mx=Math.max(1,Math.max.apply(null,wk.map(function(d){return d.n;})));
@@ -915,7 +969,12 @@ function viewHome(){
     week:{c:'var(--green)',body:'<div class="home-card-head"><span>📈 今週の進捗</span><span class="home-card-meta">'+wsum+'歩 ›</span></div><div class="week" style="padding-top:4px">'+weekBars+'</div>'},
     projects:{c:'var(--teal)',body:'<div class="home-card-head"><span>📁 プロジェクト</span><span class="home-card-meta">見る ›</span></div>'+projPreview},
     review:{c:'var(--amber)',body:'<div class="home-card-head"><span>📊 振り返り</span><span class="home-card-meta">見る ›</span></div><div class="mini-row"><span class="mini-text">今日できたこと '+doneCount+'個 ・ 達成した目標 '+achievedCount+'個</span></div>'},
-    money:{c:'var(--green)',body:'<div class="home-card-head"><span>💰 今月のお金</span><span class="home-card-meta">見る ›</span></div><div class="money-grid" style="padding:0"><div class="money-cell" style="padding:6px 8px"><div class="money-label">収入</div><div class="money-num" style="font-size:14px;color:var(--green)">'+yen(mIncome)+'</div></div><div class="money-cell" style="padding:6px 8px"><div class="money-label">支出</div><div class="money-num" style="font-size:14px">'+yen(mExpense)+'</div></div><div class="money-cell" style="padding:6px 8px"><div class="money-label">収支</div><div class="money-num" style="font-size:14px;color:'+(mNet>=0?'var(--green)':'var(--red)')+'">'+(mNet>=0?'+':'')+yen(mNet)+'</div></div></div>'}
+    money:{c:'var(--green)',body:'<div class="home-card-head"><span>💰 今月のお金</span><span class="home-card-meta">見る ›</span></div><div class="money-grid" style="padding:0"><div class="money-cell" style="padding:6px 8px"><div class="money-label">収入</div><div class="money-num" style="font-size:14px;color:var(--green)">'+yen(mIncome)+'</div></div><div class="money-cell" style="padding:6px 8px"><div class="money-label">支出</div><div class="money-num" style="font-size:14px">'+yen(mExpense)+'</div></div><div class="money-cell" style="padding:6px 8px"><div class="money-label">収支</div><div class="money-num" style="font-size:14px;color:'+(mNet>=0?'var(--green)':'var(--red)')+'">'+(mNet>=0?'+':'')+yen(mNet)+'</div></div></div>'+
+      (varBudget>0?('<div class="mini-row" style="border-top:1px solid var(--line-soft);margin-top:6px;padding-top:8px"><span class="mini-text">生活費 残り <strong style="color:'+(varRemaining>=0?'var(--green)':'var(--red)')+'">'+yen(varRemaining)+'</strong> <span style="color:var(--ink-3)">/ '+yen(varBudget)+'</span></span></div>'):'')},
+    upcoming:{c:'var(--red)',body:'<div class="home-card-head"><span>📅 近い支払い</span><span class="home-card-meta">見る ›</span></div>'+
+      (upcomingPays.length?upcomingPays.slice(0,4).map(function(u){
+        return '<div class="mini-row"><span class="mini-text">'+(u.days===0?'今日':'あと'+u.days+'日')+' ・ '+esc(u.name)+'</span><span style="margin-left:auto;font-size:12px;font-weight:600">'+yen(u.amount)+'</span></div>';
+      }).join(''):'<div class="mini-empty">2週間以内の支払い予定はありません</div>')}
   };
   var order=S.homeOrder.filter(function(id){return CARD_DEFS[id];});
   var cardsHtml=order.map(function(id,i){
@@ -925,7 +984,7 @@ function viewHome(){
         '<button class="move-btn" data-move="-1" data-movehome="'+id+'" '+(i===0?'disabled':'')+'>▲</button>'+
         '<button class="move-btn" data-move="1" data-movehome="'+id+'" '+(i===order.length-1?'disabled':'')+'>▼</button>'+
       '</div>'):'';
-    return '<div class="card accent home-link '+(reorder?'reordering':'')+'" style="--accent-c:'+def.c+'" '+(reorder?'':'data-tab="'+(id==='week'?'review':id)+'"')+'>'+
+    return '<div class="card accent home-link '+(reorder?'reordering':'')+'" style="--accent-c:'+def.c+'" '+(reorder?'':'data-tab="'+(id==='week'?'review':id==='upcoming'?'money':id)+'"')+'>'+
       def.body+moveBtns+
     '</div>';
   }).join('');
@@ -938,6 +997,13 @@ function viewHome(){
       '<h1>'+greet()+'、'+esc(S.userName)+'さん!</h1>'+
       '<p>今日の一歩が、未来につながります。</p>'+
     '</div>'+
+
+    (homeTheme?(
+      '<div class="home-theme" data-tab="goals">'+
+        '<div class="ht-label">🧭 今週のテーマ</div>'+
+        '<div class="ht-text">'+esc(homeTheme).replace(/\n/g,'<br>')+'</div>'+
+      '</div>'
+    ):'<div class="home-theme empty" data-tab="goals"><div class="ht-label">🧭 今週のテーマ</div><div class="ht-text" style="color:var(--ink-3)">まだ決めていません — タップして設定 ›</div></div>')+
 
     '<div style="display:flex;justify-content:flex-end;margin:2px 2px 10px">'+
       '<button class="reorder-btn '+(reorder?'on':'')+'" data-homereorder="1">'+(reorder?'完了':'並び替え')+'</button></div>'+
@@ -1228,6 +1294,14 @@ function amountForKind(kind,monthsBack){
   if(templates.length) return sumTxns(templates.map(function(t){return {amount:t.amount};}));
   return avgExpenseByKind(kind,monthsBack);
 }
+/* 変動費は実績があれば実績優先(実際の使い方の方が正確なため)、記録がまだなければ登録した見込み額を使う */
+function amountForVariable(monthsBack){
+  var actual=avgExpenseByKind('variable',monthsBack);
+  if(actual>0) return actual;
+  var templates=S.fixedCostTemplates.filter(function(t){return t.kind==='variable';});
+  if(templates.length) return sumTxns(templates.map(function(t){return {amount:t.amount};}));
+  return 0;
+}
 
 /* 給与見込みの計算(設定と今月の勤務入力があれば計算、なければnullを返す項目あり) */
 function computeWage(month,requiredAmount,minAmount,comfortLine){
@@ -1239,7 +1313,11 @@ function computeWage(month,requiredAmount,minAmount,comfortLine){
   var overtimeLogs=wm.overtimeLogs||[],holidayLogs=wm.holidayWorkLogs||[],absenceLogs=wm.absenceLogs||[];
   var unpaidCount=absenceLogs.filter(function(a){return a.type==='unpaid';}).length;
   var paidCount=absenceLogs.filter(function(a){return a.type==='paid';}).length;
-  var workedDays=Math.max(0,plannedDays-unpaidCount-paidCount);
+  var halfCount=absenceLogs.filter(function(a){return a.type==='half';}).length;
+  var earlyLeaveHours=absenceLogs.filter(function(a){return a.type==='early';})
+    .reduce(function(a,x){return a+Math.max(0,ws.dailyHours-(+x.workedHours||0));},0);
+  var workedDays=Math.max(0,plannedDays-unpaidCount-paidCount-halfCount*0.5); // 出社ベースの実働日数(表示用、早退は日数として引かない)
+  var payableDays=Math.max(0,plannedDays-unpaidCount); // 給与計算に使う日数(有給・半休は給与を減らさない、早退は時間単位で別途減らす)
   var overtimeHoursActual=overtimeLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
   var holidayHoursTotal=holidayLogs.reduce(function(a,x){return a+(+x.hours||0);},0);
   var plannedOvertimeHours=wm.plannedOvertimeHours||0;
@@ -1248,7 +1326,8 @@ function computeWage(month,requiredAmount,minAmount,comfortLine){
 
   var overtimeRateYen=ws.hourlyRate*ws.overtimeRate;
   var holidayRateYen=ws.hourlyRate*(ws.holidayWorkRate||1.25);
-  var normalWage=ws.hourlyRate*ws.dailyHours*workedDays;
+  var earlyLeaveLoss=ws.hourlyRate*earlyLeaveHours;
+  var normalWage=Math.max(0,ws.hourlyRate*ws.dailyHours*payableDays-earlyLeaveLoss);
   var absenceLoss=ws.hourlyRate*ws.dailyHours*unpaidCount;
   var overtimeWageActual=overtimeRateYen*overtimeHoursActual;
   var overtimeWage=overtimeRateYen*overtimeHoursForecast; // 見込み側で使う残業代(予定ベース)
@@ -1258,10 +1337,11 @@ function computeWage(month,requiredAmount,minAmount,comfortLine){
   var takeHomeActual=grossActual*ws.takeHomeRate;
   var takeHome=gross*ws.takeHomeRate; // 見込み手取り
 
-  r.plannedDays=plannedDays;r.workedDays=workedDays;r.unpaidCount=unpaidCount;r.paidCount=paidCount;
+  r.plannedDays=plannedDays;r.workedDays=workedDays;r.payableDays=payableDays;
+  r.unpaidCount=unpaidCount;r.paidCount=paidCount;r.halfCount=halfCount;r.earlyLeaveHours=earlyLeaveHours;
   r.overtimeHoursTotal=overtimeHoursActual;r.overtimeHoursForecast=overtimeHoursForecast;r.plannedOvertimeHours=plannedOvertimeHours;
   r.holidayHoursTotal=holidayHoursTotal;
-  r.normalWage=normalWage;r.absenceLoss=absenceLoss;
+  r.normalWage=normalWage;r.absenceLoss=absenceLoss;r.earlyLeaveLoss=earlyLeaveLoss;
   r.overtimeWageActual=overtimeWageActual;r.overtimeWage=overtimeWage;r.holidayWage=holidayWage;
   r.grossActual=grossActual;r.gross=gross;r.takeHomeActual=takeHomeActual;r.takeHome=takeHome;
   r.overtimeRateYen=overtimeRateYen;
@@ -1323,7 +1403,7 @@ function viewMoney(){
 
   /* ---- 分析計算 ---- */
   var avgFixed=amountForKind('fixed',3);
-  var avgVariable=avgExpenseByKind('variable',3); // 変動費はテンプレート化できないので常に実績平均
+  var avgVariable=amountForVariable(3); // 実績があれば実績優先、無ければ登録した見込み額
   var avgSub=amountForKind('subscription',3);
   var avgLoan=amountForKind('loan',3);
   var monthlyMin=avgFixed+avgVariable+avgSub+avgLoan;
@@ -1385,7 +1465,22 @@ function viewMoney(){
       '<button class="buffer-edit" data-editbuffer="1">余裕ラインを編集 ›</button>'+
     '</div>';
 
-  var analysisBody='<div class="sec-head"><span class="sec-title">今月の支出内訳</span></div>'+
+  var varBudgetM=sumTxns(S.fixedCostTemplates.filter(function(t){return t.kind==='variable';}).map(function(t){return {amount:t.amount};}));
+  var varSpentM=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='variable';}));
+  var varRemainingM=varBudgetM-varSpentM;
+  var varPct=varBudgetM>0?Math.min(100,Math.round(varSpentM/varBudgetM*100)):0;
+  var daysLeftInMonth=new Date(new Date().getFullYear(),new Date().getMonth()+1,0).getDate()-new Date().getDate();
+
+  var analysisBody=(varBudgetM>0?(
+    '<div class="sec-head"><span class="sec-title">生活費の残り</span></div>'+
+    '<div class="card accent" style="--accent-c:'+(varRemainingM>=0?'var(--green)':'var(--red)')+'">'+
+      '<div class="need-row"><span class="need-label">今月あと使える</span><span class="need-num" style="color:'+(varRemainingM>=0?'var(--green)':'var(--red)')+'">'+yen(varRemainingM)+'</span></div>'+
+      '<div class="need-row"><span class="need-label">使った / 予算</span><span class="need-num" style="font-size:13px;color:var(--ink-3)">'+yen(varSpentM)+' / '+yen(varBudgetM)+'</span></div>'+
+      '<div style="padding:4px 16px 12px"><div class="mini-bar"><span style="width:'+varPct+'%;background:'+(varRemainingM>=0?'var(--green)':'var(--red)')+'"></span></div></div>'+
+      (varRemainingM>=0&&daysLeftInMonth>0?('<div class="need-note">残り'+daysLeftInMonth+'日 ・ 1日あたり約'+yen(varRemainingM/daysLeftInMonth)+'まで</div>'):'')+
+    '</div>'
+  ):'')+
+  '<div class="sec-head"><span class="sec-title">今月の支出内訳</span></div>'+
     '<div class="card">'+kindBreakdown.map(function(k){
       var pct=Math.round(k.amount/kindTotal*100);
       return '<div class="load-row"><span class="load-name">'+k.label+'</span>'+
@@ -1465,7 +1560,9 @@ function viewMoney(){
     '<div class="add-row-pair">'+
       '<button class="add-money-btn income" data-new="income">＋ 収入を追加</button>'+
       '<button class="add-money-btn expense" data-new="expense">＋ 支出を追加</button>'+
-    '</div>'):'')+
+    '</div>'+
+    '<div class="add-row-pair"><button class="add-money-btn expense" data-new="living" style="flex:1">＋ 生活費を記録(食費など)</button></div>'
+    ):'')+
     '<div class="card">'+txnRows+'</div>';
 
   var ws=S.wageSettings,wm=S.workMonths[moneyMonth];
@@ -1497,7 +1594,8 @@ function viewMoney(){
         '<div class="load-row" style="padding:5px 0"><span class="load-name">勤務予定日数(平日から自動計算)</span><span class="load-meta">'+wgView.plannedDays+'日</span></div>'+
         '<div class="load-row" style="padding:5px 0"><span class="load-name">予定残業時間(月合計)</span><span class="load-meta">'+((wm&&wm.plannedOvertimeHours)||0)+'h</span></div>'+
         '<div class="load-row" style="padding:5px 0;border-top:1px solid var(--line-soft);margin-top:4px"><span class="load-name">実働日数(自動計算)</span><span class="load-meta">'+wgView.workedDays+'日</span></div>'+
-        '<div class="load-row" style="padding:5px 0"><span class="load-name">欠勤 / 有給</span><span class="load-meta">'+wgView.unpaidCount+'日 ・ '+wgView.paidCount+'日</span></div>'+
+        '<div class="load-row" style="padding:5px 0"><span class="load-name">欠勤 / 有給 / 半休</span><span class="load-meta">'+wgView.unpaidCount+'日 ・ '+wgView.paidCount+'日 ・ '+wgView.halfCount+'回</span></div>'+
+        (wgView.earlyLeaveHours>0?('<div class="load-row" style="padding:5px 0"><span class="load-name">早退</span><span class="load-meta">'+wgView.earlyLeaveHours+'h</span></div>'):'')+
         '<div class="load-row" style="padding:5px 0"><span class="load-name">残業時間合計</span><span class="load-meta">'+wgView.overtimeHoursTotal+'h</span></div>'+
         '<div class="load-row" style="padding:5px 0"><span class="load-name">休日出勤時間合計</span><span class="load-meta">'+wgView.holidayHoursTotal+'h</span></div>'+
         (wgView.advancePaid>0?('<div class="load-row" style="padding:5px 0"><span class="load-name">前払い受取済み(記録から自動集計)</span><span class="load-meta">'+yen(wgView.advancePaid)+'</span></div>'):'')+
@@ -1516,9 +1614,9 @@ function viewMoney(){
 
       (overtimeLogs.length||holidayLogs.length||absenceLogs.length?(
         '<div class="card">'+
-          overtimeLogs.map(function(l){return '<div class="txn-row"><div class="txn-main"><div class="txn-name">🔁 残業 '+l.hours+'h</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div>'+(isCurrentMonth?'<button class="del" data-delovertimelog="'+l.id+'">×</button>':'')+'</div>';}).join('')+
-          holidayLogs.map(function(l){return '<div class="txn-row"><div class="txn-main"><div class="txn-name">🗓️ 休日出勤 '+l.hours+'h</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div>'+(isCurrentMonth?'<button class="del" data-delholidaylog="'+l.id+'">×</button>':'')+'</div>';}).join('')+
-          absenceLogs.map(function(l){return '<div class="txn-row"><div class="txn-main"><div class="txn-name">'+(l.type==='paid'?'🟢 有給':'🔴 欠勤')+'</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div>'+(isCurrentMonth?'<button class="del" data-delabsencelog="'+l.id+'">×</button>':'')+'</div>';}).join('')+
+          overtimeLogs.map(function(l){var md=l.date?new Date(l.date+'T00:00:00'):null;return '<div class="txn-row"><div class="txn-main"><div class="txn-name">🔁 残業 '+l.hours+'h'+(md?(' ・ '+(md.getMonth()+1)+'/'+md.getDate()):'')+'</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div>'+(isCurrentMonth?'<button class="del" data-delovertimelog="'+l.id+'">×</button>':'')+'</div>';}).join('')+
+          holidayLogs.map(function(l){var md=l.date?new Date(l.date+'T00:00:00'):null;return '<div class="txn-row"><div class="txn-main"><div class="txn-name">🗓️ 休日出勤 '+l.hours+'h'+(md?(' ・ '+(md.getMonth()+1)+'/'+md.getDate()):'')+'</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div>'+(isCurrentMonth?'<button class="del" data-delholidaylog="'+l.id+'">×</button>':'')+'</div>';}).join('')+
+          absenceLogs.map(function(l){var md=l.date?new Date(l.date+'T00:00:00'):null;var lbl;if(l.type==='paid')lbl='🟢 有給';else if(l.type==='half')lbl='🟡 半休';else if(l.type==='early'){var shortfall=ws?Math.max(0,ws.dailyHours-(+l.workedHours||0)):0;lbl='🟠 早退('+l.workedHours+'h勤務・'+shortfall+'h減)';}else lbl='🔴 欠勤';return '<div class="txn-row"><div class="txn-main"><div class="txn-name">'+lbl+(md?(' ・ '+(md.getMonth()+1)+'/'+md.getDate()):'')+'</div>'+(l.note?('<div class="txn-sub">'+esc(l.note)+'</div>'):'')+'</div>'+(isCurrentMonth?'<button class="del" data-delabsencelog="'+l.id+'">×</button>':'')+'</div>';}).join('')+
         '</div>'
       ):'<div class="empty">この月の記録はありません。</div>');
 
@@ -1527,6 +1625,7 @@ function viewMoney(){
         '<div class="card">'+
           '<div class="load-row"><span class="load-name">通常給与</span><span class="load-meta">'+yen(wgView.normalWage)+'</span></div>'+
           (wgView.absenceLoss>0?('<div class="load-row"><span class="load-name">欠勤による減少目安</span><span class="load-meta" style="color:var(--red)">-'+yen(wgView.absenceLoss)+'</span></div>'):'')+
+          (wgView.earlyLeaveLoss>0?('<div class="load-row"><span class="load-name">早退による減少目安</span><span class="load-meta" style="color:var(--red)">-'+yen(wgView.earlyLeaveLoss)+'</span></div>'):'')+
           '<div class="load-row"><span class="load-name">残業代(予定 '+wgView.overtimeHoursForecast+'h)</span><span class="load-meta">'+yen(wgView.overtimeWage)+'</span></div>'+
           (wgView.overtimeHoursTotal>0?('<div class="load-row"><span class="load-name" style="color:var(--ink-3);font-size:11.5px">└ うち実績 '+wgView.overtimeHoursTotal+'h</span><span class="load-meta" style="color:var(--ink-3);font-size:11.5px">'+yen(wgView.overtimeWageActual)+'</span></div>'):'')+
           (wgView.holidayWage>0?('<div class="load-row"><span class="load-name">休日出勤代</span><span class="load-meta">'+yen(wgView.holidayWage)+'</span></div>'):'')+
@@ -1548,14 +1647,14 @@ function viewMoney(){
     }
   }
 
-  var fixedKindLabel={fixed:'固定費',subscription:'サブスク',loan:'借入返済'};
+  var fixedKindLabel={fixed:'固定費',variable:'変動費(見込み)',subscription:'サブスク',loan:'借入返済'};
   var templates=S.fixedCostTemplates;
   var templateTotal=sumTxns(templates.map(function(t){return {amount:t.amount};}));
   var fixedBody='<div class="sec-head"><span class="sec-title">登録済みの固定費・サブスク・借入返済</span></div>'+
     '<div class="card accent" style="--accent-c:var(--blue)">'+
       '<div class="need-row"><span class="need-label">月合計</span><span class="need-num">'+yen(templateTotal)+'</span></div>'+
     '</div>'+
-    '<div style="font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6">ここに登録しておくと、「毎月最低必要額」の固定費・サブスク・借入返済はこの金額がそのまま使われます(実績平均より優先)。実際にお金が動いたら、忘れずに「記録」タブでも支出として記録してください。</div>'+
+    '<div style="font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6">固定費・サブスク・借入返済はここに登録した金額がそのまま「毎月最低必要額」に使われます(実績平均より優先)。変動費(見込み)だけは逆で、実際の記録が貯まればそちらを優先し、記録がまだない間だけこの見込み額を使います。実際にお金が動いたら、忘れずに「記録」タブでも支出として記録してください。</div>'+
     '<div class="card">'+
       (templates.length?templates.map(function(t){
         return '<div class="txn-row" data-edittemplate="'+t.id+'">'+
@@ -1784,25 +1883,31 @@ function sheetHTML(){
       '<div class="f"><label>予定残業時間(月合計)</label><input id="i-num2" type="number" inputmode="decimal" value="'+(s.num2||'')+'" placeholder="例: 20"><div class="err" id="e-title"></div></div>';
   } else if(s.type==='overtimelog'){
     inner='<h2>残業を記録</h2>'+
-      '<div class="f"><label>時間</label><input id="i-num1" type="number" inputmode="decimal" value="'+(s.num1||'')+'" placeholder="例: 2"><div class="err" id="e-title"></div></div>'+
-      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 9/10分"></div>';
+      '<div class="f"><label>日にち</label><input id="i-tdate" type="date" value="'+(s.txnDate||todayKey())+'"></div>'+
+      '<div class="f"><label>時間</label><select id="i-num1">'+hourSelectOptions(s.num1)+'</select><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 棚卸しで遅くなった"></div>';
   } else if(s.type==='holidaylog'){
     inner='<h2>休日出勤を記録</h2>'+
-      '<div class="f"><label>時間</label><input id="i-num1" type="number" inputmode="decimal" value="'+(s.num1||'')+'" placeholder="例: 6"><div class="err" id="e-title"></div></div>'+
-      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 9/14出勤"></div>';
+      '<div class="f"><label>日にち</label><input id="i-tdate" type="date" value="'+(s.txnDate||todayKey())+'"></div>'+
+      '<div class="f"><label>時間</label><select id="i-num1">'+hourSelectOptions(s.num1)+'</select><div class="err" id="e-title"></div></div>'+
+      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 振替なし出勤"></div>';
   } else if(s.type==='absencelog'){
     inner='<h2>休みを記録</h2>'+
+      '<div class="f"><label>日にち</label><input id="i-tdate" type="date" value="'+(s.txnDate||todayKey())+'"></div>'+
       '<div class="f"><label>種類</label><div class="opts">'+
         '<button class="opt '+(s.absenceType==='paid'?'on':'')+'" data-pick="absenceType|paid" style="'+(s.absenceType==='paid'?'color:var(--blue);background:var(--blue-soft)':'')+'">有給</button>'+
+        '<button class="opt '+(s.absenceType==='half'?'on':'')+'" data-pick="absenceType|half" style="'+(s.absenceType==='half'?'color:var(--blue);background:var(--blue-soft)':'')+'">半休</button>'+
+        '<button class="opt '+(s.absenceType==='early'?'on':'')+'" data-pick="absenceType|early" style="'+(s.absenceType==='early'?'color:var(--blue);background:var(--blue-soft)':'')+'">早退</button>'+
         '<button class="opt '+(s.absenceType==='unpaid'?'on':'')+'" data-pick="absenceType|unpaid" style="'+(s.absenceType==='unpaid'?'color:var(--blue);background:var(--blue-soft)':'')+'">欠勤</button>'+
       '</div><div class="err" id="e-title"></div></div>'+
-      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 9/12"></div>';
+      (s.absenceType==='early'?('<div class="f"><label>その日は何時間働いたか</label><select id="i-num1">'+hourSelectOptions(s.num1)+'</select><div style="font-size:11px;color:var(--ink-3);margin-top:4px">所定労働時間('+(S.wageSettings?S.wageSettings.dailyHours:'?')+'h)との差分を自動で計算します</div></div>'):'')+
+      '<div class="f"><label>メモ(任意)</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 通院のため"></div>';
   } else if(s.type==='fixedtemplate'){
     inner='<h2>'+(s.id?'固定費を編集':'固定費・サブスク・借入を登録')+'</h2>'+
       '<div class="f"><label>名前</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 住宅ローン"><div class="err" id="e-title"></div></div>'+
       '<div class="f"><label>金額(月額)</label><input id="i-num1" type="number" inputmode="numeric" value="'+(s.num1||'')+'" placeholder="例: 47000"></div>'+
       '<div class="f"><label>分類</label><div class="opts">'+
-        [{id:'fixed',label:'固定費'},{id:'subscription',label:'サブスク'},{id:'loan',label:'借入返済'}].map(function(k){
+        [{id:'fixed',label:'固定費'},{id:'variable',label:'変動費(見込み)'},{id:'subscription',label:'サブスク'},{id:'loan',label:'借入返済'}].map(function(k){
           return '<button class="opt '+(s.kind===k.id?'on':'')+'" data-pick="kind|'+k.id+'" style="'+(s.kind===k.id?'color:var(--blue);background:var(--blue-soft)':'')+'">'+k.label+'</button>';
         }).join('')+
       '</div></div>'+
@@ -1945,13 +2050,13 @@ function bind(){
     render();
   }});
   q('[data-newovertimelog]',function(el){el.onclick=function(){
-    S.sheet={type:'overtimelog',id:null,num1:'',title:''};render();
+    S.sheet={type:'overtimelog',id:null,num1:'',title:'',txnDate:todayKey()};render();
   }});
   q('[data-newholidaylog]',function(el){el.onclick=function(){
-    S.sheet={type:'holidaylog',id:null,num1:'',title:''};render();
+    S.sheet={type:'holidaylog',id:null,num1:'',title:'',txnDate:todayKey()};render();
   }});
   q('[data-newabsencelog]',function(el){el.onclick=function(){
-    S.sheet={type:'absencelog',id:null,absenceType:'paid',title:''};render();
+    S.sheet={type:'absencelog',id:null,absenceType:'paid',title:'',txnDate:todayKey()};render();
   }});
   q('[data-edittemplate]',function(el){el.onclick=function(){
     var t=find(S.fixedCostTemplates,el.dataset.edittemplate);if(!t)return;
@@ -2064,6 +2169,7 @@ function bind(){
     if(k==='proj')S.sheet={type:'proj',id:null,title:'',emoji:'🎓',color:PROJ_COLORS[0],deadline:''};
     if(k==='cat')S.sheet={type:'cat',id:null,title:'',colorIdx:S.cats.length%CAT_PALETTE.length};
     if(k==='income'||k==='expense')S.sheet={type:'txn',id:null,txnType:k,title:'',amount:'',txnDate:todayKey(),category:'',scope:'personal',expenseKind:'variable',courseId:'',note:''};
+    if(k==='living')S.sheet={type:'txn',id:null,txnType:'expense',title:'',amount:'',txnDate:todayKey(),category:'食費',scope:'personal',expenseKind:'variable',courseId:'',note:''};
     if(k==='fixedtemplate')S.sheet={type:'fixedtemplate',id:null,title:'',num1:'',kind:'fixed',scope:'personal',num2:''};
     if(k==='plannedexpense')S.sheet={type:'plannedexpense',id:null,title:'',num1:'',txnDate:'',category:'',scope:'personal',note:''};
     render();
@@ -2150,21 +2256,28 @@ function submit(){
   if(s.type==='overtimelog'||s.type==='holidaylog'){
     var hrs=parseFloat(s.num1);
     var errL=document.getElementById('e-title');
-    if(!hrs||hrs<=0||isNaN(hrs)){ if(errL)errL.textContent='時間を入力してください'; return; }
-    var mk1=monthKey();
+    if(!hrs||hrs<=0||isNaN(hrs)){ if(errL)errL.textContent='時間を選んでください'; return; }
+    if(!s.txnDate){ if(errL)errL.textContent='日にちを入力してください'; return; }
+    var mk1=s.txnDate.slice(0,7);
     if(!S.workMonths[mk1]) S.workMonths[mk1]={plannedOvertimeHours:0,overtimeLogs:[],holidayWorkLogs:[],absenceLogs:[]};
     var arrKey=s.type==='overtimelog'?'overtimeLogs':'holidayWorkLogs';
     if(!S.workMonths[mk1][arrKey]) S.workMonths[mk1][arrKey]=[];
-    S.workMonths[mk1][arrKey].push({id:g(),hours:hrs,note:(s.title||'').trim()});
+    S.workMonths[mk1][arrKey].push({id:g(),hours:hrs,date:s.txnDate,note:(s.title||'').trim()});
     S.sheet=null;save();render();return;
   }
   if(s.type==='absencelog'){
     var errA=document.getElementById('e-title');
-    if(!s.absenceType){ if(errA)errA.textContent='有給か欠勤かを選んでください'; return; }
-    var mk2=monthKey();
+    if(!s.absenceType){ if(errA)errA.textContent='種類を選んでください'; return; }
+    if(!s.txnDate){ if(errA)errA.textContent='日にちを入力してください'; return; }
+    var earlyHrs=null;
+    if(s.absenceType==='early'){
+      earlyHrs=parseFloat(s.num1);
+      if(earlyHrs==null||isNaN(earlyHrs)||s.num1===''){ if(errA)errA.textContent='働いた時間を選んでください'; return; }
+    }
+    var mk2=s.txnDate.slice(0,7);
     if(!S.workMonths[mk2]) S.workMonths[mk2]={plannedOvertimeHours:0,overtimeLogs:[],holidayWorkLogs:[],absenceLogs:[]};
     if(!S.workMonths[mk2].absenceLogs) S.workMonths[mk2].absenceLogs=[];
-    S.workMonths[mk2].absenceLogs.push({id:g(),type:s.absenceType,note:(s.title||'').trim()});
+    S.workMonths[mk2].absenceLogs.push({id:g(),type:s.absenceType,workedHours:earlyHrs,date:s.txnDate,note:(s.title||'').trim()});
     S.sheet=null;save();render();return;
   }
   if(s.type==='fixedtemplate'){
