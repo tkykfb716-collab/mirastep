@@ -196,6 +196,14 @@ body{
 .home-theme.empty{background:#fafbfd}
 .ht-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;letter-spacing:.03em}
 .ht-text{font-size:14px;font-weight:600;color:var(--ink);line-height:1.6}
+.pay-date{width:46px}
+.pay-approx{font-size:9px;margin-left:1px;font-family:'Noto Sans JP',sans-serif}
+.pay-group{font-size:11px;color:var(--ink-3);padding:9px 14px 6px;background:#fafbfd;border-bottom:1px solid var(--line-soft)}
+.pay-month{padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+.pay-month:last-child{border-bottom:none}
+.pm-head{display:flex;justify-content:space-between;font-size:14px;font-weight:600;color:var(--ink)}
+.pm-extra{font-size:12px;color:var(--ink-2);margin-top:4px}
+.pay-note{font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6}
 .month-switch{display:flex;align-items:center;justify-content:center;gap:14px;padding:6px 0 10px}
 .ms-btn{
   width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:#fff;
@@ -509,7 +517,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','upcoming','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[],foodTemplateSeeded:false};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','upcoming','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[],foodTemplateSeeded:false,payView:'next'};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -935,22 +943,18 @@ function viewHome(){
   var varSpent=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='variable';}));
   var varRemaining=varBudget-varSpent;
 
-  // 支払日が近いもの(固定費テンプレートの支払日 + 予定支出)を14日先まで
-  var todayD=new Date(),todayDay=todayD.getDate();
-  var daysInThisMonth=new Date(todayD.getFullYear(),todayD.getMonth()+1,0).getDate();
+  // 近い支払い: 支払予定タブと同じ計算(今月・来月の予定)から、今日〜14日先のものを出す
+  var limitD=new Date();limitD.setDate(limitD.getDate()+14);
+  var limitK=limitD.getFullYear()+'-'+pad(limitD.getMonth()+1)+'-'+pad(limitD.getDate());
+  var todayK1=todayKey();
   var upcomingPays=[];
-  S.fixedCostTemplates.forEach(function(t){
-    if(!t.dayOfMonth)return;
-    var diff=t.dayOfMonth-todayDay;
-    if(diff<0) diff+=daysInThisMonth; // 今月分が過ぎていれば来月分として扱う
-    if(diff<=14) upcomingPays.push({name:t.name,amount:t.amount,days:diff});
+  [monthKey(),nextMonthKey()].forEach(function(mk1){
+    paymentPlanForMonth(mk1).items.forEach(function(it){
+      if(it.date&&it.date>=todayK1&&it.date<=limitK) upcomingPays.push({name:it.name,amount:it.amount,days:daysUntil(it.date)});
+    });
   });
-  S.plannedExpenses.forEach(function(p){
-    if(!p.dueDate)return;
-    var d=daysUntil(p.dueDate);
-    if(d>=0&&d<=14) upcomingPays.push({name:p.name,amount:p.amount,days:d});
-  });
-  upcomingPays.sort(function(a,b){return a.days-b.days;});
+  upcomingPays.sort(function(a,b){return a.days!==b.days?a.days-b.days:b.amount-a.amount;});
+  var soonTotal=upcomingPays.reduce(function(sm,u){return sm+u.amount;},0);
 
   var wk=weekDays(),wsum=wk.reduce(function(a,b){return a+b.n;},0);
   var mx=Math.max(1,Math.max.apply(null,wk.map(function(d){return d.n;})));
@@ -971,10 +975,10 @@ function viewHome(){
     review:{c:'var(--amber)',body:'<div class="home-card-head"><span>📊 振り返り</span><span class="home-card-meta">見る ›</span></div><div class="mini-row"><span class="mini-text">今日できたこと '+doneCount+'個 ・ 達成した目標 '+achievedCount+'個</span></div>'},
     money:{c:'var(--green)',body:'<div class="home-card-head"><span>💰 今月のお金</span><span class="home-card-meta">見る ›</span></div><div class="money-grid" style="padding:0"><div class="money-cell" style="padding:6px 8px"><div class="money-label">収入</div><div class="money-num" style="font-size:14px;color:var(--green)">'+yen(mIncome)+'</div></div><div class="money-cell" style="padding:6px 8px"><div class="money-label">支出</div><div class="money-num" style="font-size:14px">'+yen(mExpense)+'</div></div><div class="money-cell" style="padding:6px 8px"><div class="money-label">収支</div><div class="money-num" style="font-size:14px;color:'+(mNet>=0?'var(--green)':'var(--red)')+'">'+(mNet>=0?'+':'')+yen(mNet)+'</div></div></div>'+
       (varBudget>0?('<div class="mini-row" style="border-top:1px solid var(--line-soft);margin-top:6px;padding-top:8px"><span class="mini-text">生活費 残り <strong style="color:'+(varRemaining>=0?'var(--green)':'var(--red)')+'">'+yen(varRemaining)+'</strong> <span style="color:var(--ink-3)">/ '+yen(varBudget)+'</span></span></div>'):'')},
-    upcoming:{c:'var(--red)',body:'<div class="home-card-head"><span>📅 近い支払い</span><span class="home-card-meta">見る ›</span></div>'+
+    upcoming:{c:'var(--red)',body:'<div class="home-card-head"><span>📅 近い支払い</span><span class="home-card-meta">'+(upcomingPays.length?'2週間で '+yen(soonTotal)+' ›':'見る ›')+'</span></div>'+
       (upcomingPays.length?upcomingPays.slice(0,4).map(function(u){
         return '<div class="mini-row"><span class="mini-text">'+(u.days===0?'今日':'あと'+u.days+'日')+' ・ '+esc(u.name)+'</span><span style="margin-left:auto;font-size:12px;font-weight:600">'+yen(u.amount)+'</span></div>';
-      }).join(''):'<div class="mini-empty">2週間以内の支払い予定はありません</div>')}
+      }).join('')+(upcomingPays.length>4?'<div class="mini-row"><span class="mini-text" style="color:var(--ink-3)">ほか'+(upcomingPays.length-4)+'件</span></div>':''):'<div class="mini-empty">2週間以内の支払い予定はありません</div>')}
   };
   var order=S.homeOrder.filter(function(id){return CARD_DEFS[id];});
   var cardsHtml=order.map(function(id,i){
@@ -984,7 +988,7 @@ function viewHome(){
         '<button class="move-btn" data-move="-1" data-movehome="'+id+'" '+(i===0?'disabled':'')+'>▲</button>'+
         '<button class="move-btn" data-move="1" data-movehome="'+id+'" '+(i===order.length-1?'disabled':'')+'>▼</button>'+
       '</div>'):'';
-    return '<div class="card accent home-link '+(reorder?'reordering':'')+'" style="--accent-c:'+def.c+'" '+(reorder?'':'data-tab="'+(id==='week'?'review':id==='upcoming'?'money':id)+'"')+'>'+
+    return '<div class="card accent home-link '+(reorder?'reordering':'')+'" style="--accent-c:'+def.c+'" '+(reorder?'':'data-tab="'+(id==='week'?'review':id==='upcoming'?'money':id)+'"'+(id==='upcoming'?' data-gomv="planned" data-gopv="this"':''))+'>'+
       def.body+moveBtns+
     '</div>';
   }).join('');
@@ -1278,6 +1282,7 @@ function avgExpenseByKind(kind,monthsBack){
   var sums={};
   S.transactions.forEach(function(t){
     if(t.type==='expense'&&t.expenseKind===kind&&t.date){
+      if(kind==='variable'&&txnCoveredByTemplate(t)) return; // 固定費タブに登録済みの項目と重なる記録は二重に数えない
       var mk=t.date.slice(0,7);
       sums[mk]=(sums[mk]||0)+(+t.amount||0);
     }
@@ -1294,13 +1299,102 @@ function amountForKind(kind,monthsBack){
   if(templates.length) return sumTxns(templates.map(function(t){return {amount:t.amount};}));
   return avgExpenseByKind(kind,monthsBack);
 }
-/* 変動費は実績があれば実績優先(実際の使い方の方が正確なため)、記録がまだなければ登録した見込み額を使う */
+/* 変動費 = 登録した見込み額(予算) + それ以外の日々の変動費(記録の平均)。登録済みの項目と重なる記録は平均から除外済み */
 function amountForVariable(monthsBack){
-  var actual=avgExpenseByKind('variable',monthsBack);
-  if(actual>0) return actual;
-  var templates=S.fixedCostTemplates.filter(function(t){return t.kind==='variable';});
-  if(templates.length) return sumTxns(templates.map(function(t){return {amount:t.amount};}));
-  return 0;
+  var tpl=sumTxns(S.fixedCostTemplates.filter(function(t){return t.kind==='variable';}).map(function(t){return {amount:t.amount};}));
+  return tpl+avgExpenseByKind('variable',monthsBack);
+}
+
+/* 名前の照合(空白の違いは無視、「住宅ローン」と「住宅ローン 8月分」は同じ項目とみなす) */
+function normName(s){return String(s||'').replace(/[\s\u3000]/g,'').toLowerCase();}
+function nameMatch(txnName,tplName){
+  var a=normName(txnName),b=normName(tplName);
+  if(!a||!b) return false;
+  if(b.length>=2&&a.indexOf(b)>-1) return true;
+  if(a.length>=3&&b.indexOf(a)>-1) return true;
+  return false;
+}
+/* 固定費タブの登録でカバーされている記録か(名前が一致、またはカテゴリ名が登録名と同じ 例: 登録「食費」⇔ カテゴリ食費の記録) */
+function txnCoveredByTemplate(t){
+  return S.fixedCostTemplates.some(function(tpl){
+    return nameMatch(t.name,tpl.name)||(!!t.category&&t.category===tpl.name);
+  });
+}
+
+var PAY_KIND_LABEL={loan:'借入返済',fixed:'固定費',subscription:'サブスク',variable:'変動費(見込み)',planned:'単発の予定',irregular:'臨時支出',overdue:'遅延・未払い'};
+var PAY_KIND_ORDER=['loan','fixed','subscription','variable','planned','irregular','overdue'];
+
+/* 指定月(YYYY-MM)の支払い予定:
+   固定費タブの登録(毎月) + 支払予定タブの単発の予定 + その月の日付で記録済みの支払い。
+   同じものが記録済みなら記録の金額・日付を使い、二重に数えない */
+function paymentPlanForMonth(mk){
+  var p=mk.split('-'),y=+p[0],m=+p[1];
+  var dim=new Date(y,m,0).getDate();
+  var todayK=todayKey(),isFuture=(mk>monthKey());
+  var monthTx=S.transactions.filter(function(t){return t.type==='expense'&&t.date&&t.date.slice(0,7)===mk;});
+  var used={};
+  function takeMatch(name,amount){
+    var best=null,bestDiff=Infinity;
+    monthTx.forEach(function(t){
+      if(used[t.id]||!nameMatch(t.name,name))return;
+      var d=Math.abs((+t.amount||0)-(+amount||0));
+      if(d<bestDiff){best=t;bestDiff=d;}
+    });
+    if(best) used[best.id]=true;
+    return best;
+  }
+  function inferDay(tpl){ // 支払日が未設定なら、過去の記録(金額が一番近いもの)の日付から推定
+    if(tpl.dayOfMonth) return {day:tpl.dayOfMonth,approx:false};
+    var hits=S.transactions.filter(function(t){return t.type==='expense'&&t.date&&nameMatch(t.name,tpl.name);})
+      .sort(function(a,b){
+        var da=Math.abs((+a.amount||0)-(+tpl.amount||0)),db=Math.abs((+b.amount||0)-(+tpl.amount||0));
+        if(da!==db) return da-db;
+        return a.date<b.date?1:-1;
+      });
+    return hits.length?{day:+hits[0].date.slice(8,10),approx:true}:null;
+  }
+  var items=[];
+  S.fixedCostTemplates.forEach(function(tpl){
+    var hit=takeMatch(tpl.name,tpl.amount);
+    if(hit){ items.push({id:tpl.id,src:'tpl',name:tpl.name,amount:+hit.amount||0,date:hit.date,kind:tpl.kind,recorded:true}); return; }
+    var dd=inferDay(tpl);
+    items.push({id:tpl.id,src:'tpl',name:tpl.name,amount:+tpl.amount||0,
+      date:dd?(mk+'-'+pad(Math.min(dd.day,dim))):null,approx:!!(dd&&dd.approx),kind:tpl.kind,recorded:false});
+  });
+  S.plannedExpenses.forEach(function(pe){
+    if(!pe.dueDate||pe.dueDate.slice(0,7)!==mk)return;
+    var hit=takeMatch(pe.name,pe.amount);
+    items.push({id:pe.id,src:'planned',name:pe.name,amount:hit?(+hit.amount||0):(+pe.amount||0),date:hit?hit.date:pe.dueDate,kind:'planned',recorded:!!hit});
+  });
+  monthTx.forEach(function(t){ // 登録と一致しなかった記録のうち、支払いとして見るべきもの
+    if(used[t.id])return;
+    if(isFuture||(t.expenseKind&&t.expenseKind!=='variable')||t.date>todayK){
+      items.push({id:t.id,src:'txn',name:t.name,amount:+t.amount||0,date:t.date,kind:t.expenseKind||'variable',recorded:true});
+    }
+  });
+  items.sort(function(a,b){
+    if(!a.date&&!b.date) return b.amount-a.amount;
+    if(!a.date) return 1; if(!b.date) return -1;
+    if(a.date!==b.date) return a.date<b.date?-1:1;
+    return b.amount-a.amount;
+  });
+  var byKind={};
+  items.forEach(function(i){byKind[i.kind]=(byKind[i.kind]||0)+i.amount;});
+  return {mk:mk,items:items,byKind:byKind,total:items.reduce(function(s,i){return s+i.amount;},0)};
+}
+
+/* 来月必要見込み = 来月の支払い予定 + 日々の変動費(記録の平均) + 登録がない分類の平均 */
+function nextMonthForecast(){
+  var plan=paymentPlanForMonth(nextMonthKey());
+  var fallbacks=[];
+  ['fixed','subscription','loan'].forEach(function(k){
+    if(S.fixedCostTemplates.some(function(t){return t.kind===k;})) return;
+    var a=avgExpenseByKind(k,3);
+    if(a>0) fallbacks.push({kind:k,amount:a});
+  });
+  var dailyVar=avgExpenseByKind('variable',3);
+  var fbTotal=fallbacks.reduce(function(s,f){return s+f.amount;},0);
+  return {plan:plan,fallbacks:fallbacks,fbTotal:fbTotal,dailyVar:dailyVar,total:plan.total+fbTotal+dailyVar};
 }
 
 /* 給与見込みの計算(設定と今月の勤務入力があれば計算、なければnullを返す項目あり) */
@@ -1416,9 +1510,8 @@ function viewMoney(){
 
   var nmk=nextMonthKey();
   var nextTxns=S.transactions.filter(function(t){return t.date&&t.date.slice(0,7)===nmk;});
-  var nextIrregular=sumTxns(nextTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='irregular';}));
-  var nextPlanned=sumTxns(S.plannedExpenses.filter(function(p){return p.dueDate&&p.dueDate.slice(0,7)===nmk;}).map(function(p){return {amount:p.amount};}));
-  var nextRequired=monthlyMin+nextIrregular+nextPlanned;
+  var nf=nextMonthForecast(); // 支払予定タブと同じ計算を使う(数字が食い違わないように)
+  var nextRequired=nf.total;
   var nextIncomeEntered=sumTxns(nextTxns.filter(function(t){return t.type==='income';}));
   var hasNextIncome=nextTxns.some(function(t){return t.type==='income';});
   var nextShortfall=hasNextIncome?(nextIncomeEntered-nextRequired):null;
@@ -1434,7 +1527,7 @@ function viewMoney(){
     '<button class="chip '+(moneyView==='record'?'on':'')+'" data-moneyview="record">記録</button>'+
     '<button class="chip '+(moneyView==='wage'?'on':'')+'" data-moneyview="wage">給与</button>'+
     '<button class="chip '+(moneyView==='fixed'?'on':'')+'" data-moneyview="fixed">固定費</button>'+
-    '<button class="chip '+(moneyView==='planned'?'on':'')+'" data-moneyview="planned">予定支出</button>';
+    '<button class="chip '+(moneyView==='planned'?'on':'')+'" data-moneyview="planned">支払予定</button>';
 
   var wg=computeWage(monthKey(),thisRequired,monthlyMin,comfortLine);
   var moneyMonth=S.moneyMonth||monthKey();
@@ -1489,14 +1582,16 @@ function viewMoney(){
     }).join('')+'</div>'+
     '<div class="sec-head"><span class="sec-title">来月予測の内訳</span></div>'+
     '<div class="card">'+
-      '<div class="load-row"><span class="load-name">固定費(平均)</span><span class="load-meta">'+yen(avgFixed)+'</span></div>'+
-      '<div class="load-row"><span class="load-name">変動費(平均)</span><span class="load-meta">'+yen(avgVariable)+'</span></div>'+
-      '<div class="load-row"><span class="load-name">サブスク(平均)</span><span class="load-meta">'+yen(avgSub)+'</span></div>'+
-      '<div class="load-row"><span class="load-name">借入返済(平均)</span><span class="load-meta">'+yen(avgLoan)+'</span></div>'+
-      (nextIrregular>0?('<div class="load-row"><span class="load-name">来月分の臨時支出(記録済み)</span><span class="load-meta">'+yen(nextIrregular)+'</span></div>'):'')+
-      (nextPlanned>0?('<div class="load-row"><span class="load-name">来月分の支出予定</span><span class="load-meta">'+yen(nextPlanned)+'</span></div>'):'')+
+      PAY_KIND_ORDER.map(function(k){
+        var fb=nf.fallbacks.filter(function(f){return f.kind===k;})[0];
+        var amt=(nf.plan.byKind[k]||0)+(fb?fb.amount:0);
+        if(amt<=0) return '';
+        return '<div class="load-row"><span class="load-name">'+PAY_KIND_LABEL[k]+(fb?'(平均)':'')+'</span><span class="load-meta">'+yen(amt)+'</span></div>';
+      }).join('')+
+      (nf.dailyVar>0?('<div class="load-row"><span class="load-name">日々の変動費(記録の平均)</span><span class="load-meta">'+yen(nf.dailyVar)+'</span></div>'):'')+
+      '<div class="load-row" style="border-top:1px solid var(--line-soft)"><span class="load-name" style="font-weight:600;color:var(--ink)">来月必要見込み</span><span class="load-meta" style="font-weight:700;color:var(--ink)">'+yen(nf.total)+'</span></div>'+
     '</div>'+
-    '<div style="font-size:11.5px;color:var(--ink-3);margin:0 2px 4px;line-height:1.6">固定費・変動費・サブスク・借入返済は直近最大3ヶ月の実績平均(登録済みなら固定費タブの金額)から算出。臨時支出は来月の日付で記録済みのもの、支出予定は「予定支出」タブで来月分として登録したものを反映しています。</div>';
+    '<div style="font-size:11.5px;color:var(--ink-3);margin:0 2px 4px;line-height:1.6">固定費タブの登録額(来月の日付で記録済みならその金額)と単発の予定に、日々の変動費(直近3ヶ月の記録の平均)を足しています。何がいつ出ていくかは「支払予定」タブで見られます。</div>';
 
   var moneyFilter=S.moneyFilter||'all';
   var filterChips='<button class="chip '+(moneyFilter==='all'?'on':'')+'" data-moneyf="all">すべて</button>'+
@@ -1654,7 +1749,7 @@ function viewMoney(){
     '<div class="card accent" style="--accent-c:var(--blue)">'+
       '<div class="need-row"><span class="need-label">月合計</span><span class="need-num">'+yen(templateTotal)+'</span></div>'+
     '</div>'+
-    '<div style="font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6">固定費・サブスク・借入返済はここに登録した金額がそのまま「毎月最低必要額」に使われます(実績平均より優先)。変動費(見込み)だけは逆で、実際の記録が貯まればそちらを優先し、記録がまだない間だけこの見込み額を使います。実際にお金が動いたら、忘れずに「記録」タブでも支出として記録してください。</div>'+
+    '<div style="font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6">ここに登録した金額が「毎月最低必要額」と「来月必要見込み」にそのまま使われます。登録と同じ名前(またはカテゴリ名)で記録した支出は、二重に数えないよう自動でまとめます。支払日を入れておくと、支払予定タブやホームの「近い支払い」に日付つきで出ます。</div>'+
     '<div class="card">'+
       (templates.length?templates.map(function(t){
         return '<div class="txn-row" data-edittemplate="'+t.id+'">'+
@@ -1670,12 +1765,13 @@ function viewMoney(){
   var todayD0=todayKey();
   var upcoming=S.plannedExpenses.filter(function(p){return p.dueDate>=todayD0;}).slice().sort(function(a,b){return a.dueDate<b.dueDate?-1:1;});
   var past=S.plannedExpenses.filter(function(p){return p.dueDate<todayD0;}).slice().sort(function(a,b){return a.dueDate<b.dueDate?1:-1;});
-  var upcomingTotal=sumTxns(upcoming.map(function(p){return {amount:p.amount};}));
-  var plannedKindLabel={fixed:'固定費',variable:'変動費',subscription:'サブスク',loan:'借入返済',irregular:'臨時支出',overdue:'遅延・未払い'};
+  function plannedRecorded(p){
+    return S.transactions.some(function(t){return t.type==='expense'&&t.date&&t.date.slice(0,7)===p.dueDate.slice(0,7)&&nameMatch(t.name,p.name);});
+  }
   function plannedRow(p){
-    var due=daysUntil(p.dueDate);
-    var cls=due<0?'over':due<=14?'soon':'ok';
-    var label=due<0?'期限切れ':due===0?'今日':'あと'+due+'日';
+    var due=daysUntil(p.dueDate),rec=plannedRecorded(p);
+    var cls=rec?'ok':due<0?'over':due<=14?'soon':'ok';
+    var label=rec?'記録済':due<0?'期限切れ':due===0?'今日':'あと'+due+'日';
     var md=new Date(p.dueDate+'T00:00:00');
     return '<div class="txn-row" data-editplanned="'+p.id+'">'+
       '<div class="txn-main"><div class="txn-name">'+esc(p.name)+'</div>'+
@@ -1685,17 +1781,89 @@ function viewMoney(){
       '<button class="del" data-delplanned="'+p.id+'">×</button>'+
     '</div>';
   }
-  var plannedBody='<div class="sec-head"><span class="sec-title">今後の支払い予定</span></div>'+
-    '<div class="card accent" style="--accent-c:var(--amber)">'+
-      '<div class="need-row"><span class="need-label">未来の支出予定 合計</span><span class="need-num">'+yen(upcomingTotal)+'</span></div>'+
-    '</div>'+
-    '<div style="font-size:11.5px;color:var(--ink-3);margin:8px 2px 12px;line-height:1.6">ボーナス払い・車検・お年玉など、毎月ではないけど決まって発生する支出を先に登録しておけます。支払月の予測(来月必要見込み)にも自動で反映されます。実際に払ったら「記録に追加」で取引化できます。</div>'+
+
+  /* ---- 支払予定(今月 / 来月 / 3ヶ月) ---- */
+  var payView=S.payView||'next';
+  var payChips='<div class="chips">'+
+    '<button class="chip '+(payView==='this'?'on':'')+'" data-payview="this">今月</button>'+
+    '<button class="chip '+(payView==='next'?'on':'')+'" data-payview="next">来月</button>'+
+    '<button class="chip '+(payView==='three'?'on':'')+'" data-payview="three">3ヶ月</button>'+
+  '</div>';
+  function payItemRow(i){
+    var isPast=!!(i.date&&i.date<todayD0);
+    var md=i.date?new Date(i.date+'T00:00:00'):null;
+    var attr=i.src==='tpl'?'data-edittemplate="'+i.id+'"':i.src==='planned'?'data-editplanned="'+i.id+'"':'data-edittxn="'+i.id+'"';
+    return '<div class="txn-row" '+attr+' style="cursor:pointer;'+(isPast?'opacity:.5':'')+'">'+
+      '<div class="txn-date pay-date">'+(md?((md.getMonth()+1)+'/'+md.getDate()+(i.approx?'<span class="pay-approx">頃</span>':'')):'—')+'</div>'+
+      '<div class="txn-main"><div class="txn-name">'+esc(i.name)+'</div>'+
+        '<div class="txn-sub">'+(PAY_KIND_LABEL[i.kind]||'支出')+(i.recorded?' ・ <span style="color:var(--green)">記録済</span>':'')+'</div></div>'+
+      '<div class="txn-amount">'+yen(i.amount)+'</div>'+
+    '</div>';
+  }
+  function payListCard(pl){
+    if(!pl.items.length) return '<div class="card"><div class="empty">この月の支払い予定はありません。</div></div>';
+    var dated=pl.items.filter(function(i){return i.date;}),undated=pl.items.filter(function(i){return !i.date;});
+    return '<div class="card">'+
+      dated.map(payItemRow).join('')+
+      (undated.length?('<div class="pay-group">日付未定(毎月かかるもの)</div>'+undated.map(payItemRow).join('')):'')+
+    '</div>';
+  }
+  function kindRowsHtml(byKind){
+    return PAY_KIND_ORDER.filter(function(k){return byKind[k]>0;}).map(function(k){
+      return '<div class="load-row"><span class="load-name">'+PAY_KIND_LABEL[k]+'</span><span class="load-meta">'+yen(byKind[k])+'</span></div>';
+    }).join('');
+  }
+
+  var scheduleHtml;
+  if(payView==='three'){
+    var threePlans=[1,2,3].map(function(d){return paymentPlanForMonth(shiftMonthKey(monthKey(),d));});
+    var threeTotal=threePlans.reduce(function(s,pl){return s+pl.total;},0);
+    scheduleHtml='<div class="card accent" style="--accent-c:var(--amber)">'+
+        '<div class="need-row"><span class="need-label">来月から3ヶ月の支払い予定</span><span class="need-num">'+yen(threeTotal)+'</span></div>'+
+        '<div style="height:4px"></div>'+
+      '</div>'+
+      '<div class="card">'+threePlans.map(function(pl){
+        var extras=pl.items.filter(function(i){return i.src!=='tpl';});
+        return '<div class="pay-month">'+
+          '<div class="pm-head"><span>'+monthLabel(pl.mk)+'</span><span>'+yen(pl.total)+'</span></div>'+
+          (extras.length?extras.map(function(i){return '<div class="pm-extra">＋ '+esc(i.name)+' '+yen(i.amount)+'</div>';}).join(''):
+            '<div class="pm-extra" style="color:var(--ink-3)">いつもの支払いのみ</div>')+
+        '</div>';
+      }).join('')+'</div>'+
+      (nf.dailyVar>0?'<div class="pay-note">※この他に、日々の変動費(記録の平均)として月に約'+yen(nf.dailyVar)+'を見込んでいます。</div>':'');
+  } else {
+    var payMk=payView==='this'?monthKey():nextMonthKey();
+    var payPlan=payView==='this'?paymentPlanForMonth(payMk):nf.plan;
+    var fromToday=payPlan.items.filter(function(i){return i.date&&i.date>=todayD0;}).reduce(function(s,i){return s+i.amount;},0);
+    scheduleHtml='<div class="card accent" style="--accent-c:var(--amber)">'+
+        '<div class="need-row"><span class="need-label">'+monthLabel(payMk)+'の支払い予定</span><span class="need-num">'+yen(payPlan.total)+'</span></div>'+
+        (payView==='this'?'<div class="need-row"><span class="need-label">そのうち今日以降</span><span class="need-num" style="font-size:14px">'+yen(fromToday)+'</span></div>':'')+
+        '<div class="need-divider"></div>'+
+        kindRowsHtml(payPlan.byKind)+
+        (payView==='next'&&(nf.dailyVar>0||nf.fbTotal>0)?(
+          '<div class="need-divider"></div>'+
+          (nf.dailyVar>0?'<div class="load-row"><span class="load-name">＋ 日々の変動費(記録の平均)</span><span class="load-meta">'+yen(nf.dailyVar)+'</span></div>':'')+
+          (nf.fbTotal>0?'<div class="load-row"><span class="load-name">＋ 平均で見込んでいる分</span><span class="load-meta">'+yen(nf.fbTotal)+'</span></div>':'')+
+          '<div class="need-row"><span class="need-label">来月必要見込み</span><span class="need-num" style="font-size:15px">'+yen(nf.total)+'</span></div>'
+        ):'')+
+        '<div style="height:6px"></div>'+
+      '</div>'+
+      payListCard(payPlan)+
+      (payPlan.items.some(function(i){return i.approx;})?'<div class="pay-note">「頃」は過去の記録から推定した支払日です。項目をタップすると正確な支払日を設定できます。</div>':'');
+  }
+
+  var plannedBody='<div class="sec-head"><span class="sec-title">支払予定</span></div>'+
+    payChips+
+    scheduleHtml+
+
+    '<div class="sec-head"><span class="sec-title">単発の支出予定(車検・お年玉など)</span></div>'+
+    '<div class="pay-note" style="margin-top:0">毎月ではない支払いを登録しておくと、その月の支払予定と来月必要見込みに入ります。払ったら「記録」タブで同じ名前で記録すれば、予定と自動でまとめて表示されます。</div>'+
     '<div class="card">'+
       (upcoming.length?upcoming.map(plannedRow).join(''):'<div class="empty">予定はまだありません。</div>')+
     '</div>'+
-    '<div class="add-row-pair"><button class="add-money-btn income" data-new="plannedexpense" style="flex:1">＋ 支出予定を登録</button></div>'+
+    '<div class="add-row-pair"><button class="add-money-btn income" data-new="plannedexpense" style="flex:1">＋ 単発の支出予定を登録</button></div>'+
     (past.length?(
-      '<div class="sec-head"><span class="sec-title">期限切れ(未対応)</span></div>'+
+      '<div class="sec-head"><span class="sec-title">過ぎた予定</span></div>'+
       '<div class="card">'+past.map(plannedRow).join('')+'</div>'
     ):'');
 
@@ -1992,7 +2160,7 @@ function renderSidebar(){
 }
 
 function bind(){
-  q('[data-tab]',function(el){el.onclick=function(){S.tab=el.dataset.tab;S.filter='all';render()}});
+  q('[data-tab]',function(el){el.onclick=function(){S.tab=el.dataset.tab;S.filter='all';if(el.dataset.gomv)S.moneyView=el.dataset.gomv;if(el.dataset.gopv)S.payView=el.dataset.gopv;render()}});
   q('[data-openproj]',function(el){el.onclick=function(){
     S.tab='projects';S.openProj[el.dataset.openproj]=true;render();
   }});
@@ -2027,6 +2195,7 @@ function bind(){
   }});
   q('[data-moneyf]',function(el){el.onclick=function(){S.moneyFilter=el.dataset.moneyf;render();}});
   q('[data-moneyview]',function(el){el.onclick=function(){S.moneyView=el.dataset.moneyview;render();}});
+  q('[data-payview]',function(el){el.onclick=function(){S.payView=el.dataset.payview;render();}});
   q('[data-monthnav]',function(el){el.onclick=function(){
     var parts=el.dataset.monthnav.split('|'),dir=parseInt(parts[1],10);
     var next=shiftMonthKey(S.moneyMonth||monthKey(),dir);
