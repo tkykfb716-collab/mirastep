@@ -444,6 +444,14 @@ body{
   background:var(--amber-soft);color:#8a6520;border:1px solid #f0dcb6;
   border-radius:12px;padding:10px 13px;font-size:11.5px;line-height:1.6;margin:10px 0 4px;
 }
+.sync-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:80px 24px;min-height:50vh}
+.sync-spinner{
+  width:34px;height:34px;border-radius:50%;border:3px solid var(--line-soft);border-top-color:var(--blue);
+  animation:sync-spin .8s linear infinite;margin-bottom:18px;
+}
+@keyframes sync-spin{to{transform:rotate(360deg)}}
+.sync-title{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:8px}
+.sync-sub{font-size:12.5px;color:var(--ink-3);line-height:1.7}
 </style>
 </head>
 <body>
@@ -517,7 +525,7 @@ var QUOTES=[
 ];
 
 /* ---------- 状態 ---------- */
-var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','upcoming','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[],foodTemplateSeeded:false,payView:'next'};
+var S={tab:'home',filter:'all',tasks:[],goals:[],projects:[],log:{},openProj:{},subReorder:{},sheet:null,userName:'たかはる',showDoneGoals:false,updatedAt:0,cloudError:null,syncing:false,weekNotes:{},sessionQuote:QUOTES[Math.floor(Math.random()*QUOTES.length)],cats:DEFAULT_CATS.slice(),catEditMode:false,homeOrder:['today','goals','week','projects','money','upcoming','review'],homeReorder:false,transactions:[],moneyFilter:'all',moneyView:'analysis',comfortBuffer:0,wageSettings:null,workMonths:{},fixedCostTemplates:[],moneyMonth:monthKey(),templatesSeeded:false,plannedExpenses:[],foodTemplateSeeded:false,payView:'next'};
 var root=document.getElementById('root'), navEl=document.getElementById('nav');
 
 /* ---------- 保存(端末ローカル + クラウド同期) ---------- */
@@ -582,11 +590,15 @@ async function load(){
   if(!got&&window.storage&&window.storage.get){
     try{ var r=await window.storage.get(KEY,false); if(r&&r.value){apply(r.value);got=true;} }catch(e){}
   }
-  if(!got) seed();
+  var baselineUpdatedAt=S.updatedAt||0; // reconcile比較用に、ここで一度だけ固定して控えておく(以後save()が呼ばれても揺らがないように)
+  if(!got){ seed(); S.syncing=true; } // この端末に何もデータが無い状態。クラウド確認が終わるまでは「同期中」として扱う
   migrateGoalPeriods();migrateTransactions();
   render(); // まず今わかっている状態を即表示(オフラインでもここまでは動く)
 
-  var remoteExisted=await reconcileCloud(); // クラウドの方が新しければ、繰り越し処理より先に取り込む
+  var remoteExisted=await reconcileCloud(baselineUpdatedAt); // クラウドの方が新しければ、繰り越し処理より先に取り込む
+  S.syncing=false;
+  cloudChecked=true;
+  if(pendingPush){ pendingPush=false; pushCloud(payload()); } // 確認前に保留してた分を、確認後の最新状態で送る
   seedInitialTemplates(); // 初回のみ: 記録済みのサブスク・借入返済をテンプレートとして登録
   seedFoodTemplate(); // 初回のみ: 食費を固定費として登録
 
@@ -599,15 +611,17 @@ async function load(){
   }
 }
 
-function reconcileCloud(){
+function reconcileCloud(baselineUpdatedAt){
   if(!fsReady) return Promise.resolve(false);
+  if(baselineUpdatedAt==null) baselineUpdatedAt=S.updatedAt||0;
   return fsDocRef.get().then(function(snap){
     if(!snap.exists) return false;
     var remote=snap.data();
     if(remote&&remote.blob){
       var remoteUpdated=0;
       try{ remoteUpdated=(JSON.parse(remote.blob).updatedAt)||0; }catch(e){}
-      if(remoteUpdated>(S.updatedAt||0)){
+      if(remoteUpdated>baselineUpdatedAt){
+        try{ localStorage.setItem(KEY+'_backup_before_sync',payload()); }catch(e){} // 上書きされる直前の状態を保険として残す
         apply(remote.blob);
         migrateGoalPeriods();migrateTransactions();
         try{ localStorage.setItem(KEY,remote.blob); }catch(e){}
@@ -617,7 +631,7 @@ function reconcileCloud(){
   }).catch(function(e){ S.cloudError='読み込みエラー: '+(e&&e.message||e); return true; });
 }
 
-var saveTimer=null;
+var saveTimer=null,cloudChecked=false,pendingPush=false;
 function save(){
   S.updatedAt=Date.now();
   MEM=payload();
@@ -631,7 +645,10 @@ function save(){
   if(saveTimer)clearTimeout(saveTimer);
   saveTimer=setTimeout(flush,250);
 }
-function flush(){ pushCloud(MEM); }
+function flush(){
+  if(!cloudChecked){ pendingPush=true; return; } // クラウドとの照合が終わるまでは絶対に送らない(空データでの事故上書き防止)
+  pushCloud(MEM);
+}
 
 function pushCloud(val){
   if(!fsReady) return Promise.resolve();
@@ -2108,6 +2125,19 @@ function sheetHTML(){
 
 /* ---------- 描画 ---------- */
 function render(){
+  if(S.syncing){
+    root.innerHTML=
+      '<div class="topbar"><div class="brand"><div class="logo">⛰️</div>'+
+        '<span class="brand-name">ミラステップ</span></div></div>'+
+      '<div class="wrap"><div class="sync-screen">'+
+        '<div class="sync-spinner"></div>'+
+        '<div class="sync-title">クラウドのデータを確認中…</div>'+
+        '<div class="sync-sub">この端末は初めて開いたようです。<br>少し待てば、いつものデータが表示されます。</div>'+
+      '</div></div>';
+    navEl.innerHTML='';
+    var sb0=document.getElementById('sidebar'); if(sb0) sb0.innerHTML='';
+    return;
+  }
   var v = S.tab==='home'?viewHome():S.tab==='today'?viewToday():S.tab==='goals'?viewGoals():S.tab==='projects'?viewProjects():S.tab==='money'?viewMoney():viewReview();
   var tab=TABS.filter(function(t){return t.id===S.tab})[0];
 
