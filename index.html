@@ -196,6 +196,20 @@ body{
 .home-theme.empty{background:#fafbfd}
 .ht-label{font-size:11px;color:var(--ink-3);margin-bottom:4px;letter-spacing:.03em}
 .ht-text{font-size:14px;font-weight:600;color:var(--ink);line-height:1.6}
+.focus-card{
+  background:#fff;border:1px solid var(--line-soft);border-radius:14px;
+  padding:4px 16px;margin:0 0 10px;
+}
+.focus-card.empty{background:#fafbfd;padding:14px 16px;display:flex;align-items:center;gap:10px;cursor:pointer}
+.focus-row{display:flex;align-items:flex-start;gap:10px;padding:12px 0;cursor:pointer}
+.focus-row+.focus-row{border-top:1px solid var(--line-soft)}
+.focus-icon{font-size:17px;line-height:1.4;flex-shrink:0}
+.focus-label{font-size:10.5px;color:var(--ink-3);letter-spacing:.03em;margin-bottom:2px}
+.focus-value{font-size:14px;font-weight:600;color:var(--ink);line-height:1.5}
+.focus-why{font-size:13px;font-weight:500;color:var(--ink-2);line-height:1.6}
+.focus-placeholder{color:var(--ink-3)!important;font-weight:400!important}
+.focus-task{font-size:13.5px;color:var(--ink);line-height:1.8;padding-left:2px;position:relative}
+.focus-task:before{content:'・'}
 .pay-date{width:46px}
 .pay-approx{font-size:9px;margin-left:1px;font-family:'Noto Sans JP',sans-serif}
 .pay-group{font-size:11px;color:var(--ink-3);padding:9px 14px 6px;background:#fafbfd;border-bottom:1px solid var(--line-soft)}
@@ -955,6 +969,10 @@ function viewHome(){
   var mNet=mIncome-mExpense;
   var homeTheme=S.weekNotes[currentWeekPeriod().monday]||'';
 
+  // 今日の軸: 目標(day>week>month) + なぜ + 今日やること
+  var visionGoal=S.goals.filter(function(g){return g.horizon==='future';})[0]||null;
+  var focusTasks=todayList.filter(function(t){return !t.done;}).slice(0,3);
+
   // 変動費の予算と、今月すでに使った変動費(残り予算の計算用)
   var varBudget=sumTxns(S.fixedCostTemplates.filter(function(t){return t.kind==='variable';}).map(function(t){return {amount:t.amount};}));
   var varSpent=sumTxns(monthTxns.filter(function(t){return t.type==='expense'&&t.expenseKind==='variable';}));
@@ -1018,6 +1036,25 @@ function viewHome(){
       '<h1>'+greet()+'、'+esc(S.userName)+'さん!</h1>'+
       '<p>今日の一歩が、未来につながります。</p>'+
     '</div>'+
+
+    '<div class="focus-card">'+
+        '<div class="focus-row" data-editvision="title">'+
+          '<span class="focus-icon">🎯</span>'+
+          '<div><div class="focus-label">目標(ビジョン)</div><div class="focus-value'+(visionGoal?'':' focus-placeholder')+'">'+(visionGoal?esc(visionGoal.title):'タップして入力(例: 自由になりたい)')+'</div></div>'+
+        '</div>'+
+        '<div class="focus-row" data-editvision="note">'+
+          '<span class="focus-icon">💭</span>'+
+          '<div><div class="focus-label">なぜやるのか</div><div class="focus-value focus-why'+(visionGoal&&visionGoal.note?'':' focus-placeholder')+'">'+((visionGoal&&visionGoal.note)?esc(visionGoal.note):'タップして入力')+'</div></div>'+
+        '</div>'+
+        (focusTasks.length?(
+          '<div class="focus-row" data-tab="today">'+
+            '<span class="focus-icon">✅</span>'+
+            '<div style="flex:1"><div class="focus-label">今日やること</div>'+
+              focusTasks.map(function(t){return '<div class="focus-task">'+esc(t.title)+'</div>';}).join('')+
+            '</div>'+
+          '</div>'
+        ):'<div class="focus-row" data-tab="today"><span class="focus-icon">✅</span><div><div class="focus-label">今日やること</div><div class="focus-value focus-placeholder">今日のタスクはまだありません</div></div></div>')+
+      '</div>'+
 
     (homeTheme?(
       '<div class="home-theme" data-tab="goals">'+
@@ -2047,6 +2084,16 @@ function sheetHTML(){
         S.projects.map(function(p){return '<button class="opt '+(s.courseId===p.id?'on':'')+'" data-pick="courseId|'+p.id+'" style="'+(s.courseId===p.id?'color:var(--blue);background:var(--blue-soft)':'')+'">'+p.emoji+' '+esc(p.name)+'</button>';}).join('')+
       '</div></div>'):'')+
       '<div class="f"><label>メモ(任意)</label><textarea id="i-note" placeholder="詳細など">'+esc(s.note||'')+'</textarea></div>';
+  } else if(s.type==='visionfield'){
+    if(s.field==='title'){
+      inner='<h2>目標(ビジョン)</h2>'+
+        '<div style="font-size:12px;color:var(--ink-2);margin-bottom:14px;line-height:1.7">遠い将来、こうなっていたいという姿を一言で。</div>'+
+        '<div class="f"><label>目標</label><input id="i-title" value="'+att(s.title||'')+'" placeholder="例: 自由になりたい"><div class="err" id="e-title"></div></div>';
+    } else {
+      inner='<h2>なぜやるのか</h2>'+
+        '<div style="font-size:12px;color:var(--ink-2);margin-bottom:14px;line-height:1.7">その目標を目指す理由。迷ったときに立ち返る場所。</div>'+
+        '<div class="f"><label>理由</label><textarea id="i-note" placeholder="例: 時間・場所・人に縛られない生き方をしたいから">'+esc(s.note||'')+'</textarea></div>';
+    }
   } else if(s.type==='buffer'){
     inner='<h2>余裕ラインの設定</h2>'+
       '<div style="font-size:12px;color:var(--ink-2);margin-bottom:14px;line-height:1.7">毎月最低必要額に、いくら上乗せすれば「余裕がある」と感じられるかを設定できます。</div>'+
@@ -2117,7 +2164,7 @@ function sheetHTML(){
   }
   return '<div class="ov" id="ov"><div class="sheet">'+inner+
     '<div class="acts">'+
-      ((s.id&&s.type!=='sub')||(s.type==='weektheme'&&s.existing)?'<button class="btn dan" id="b-del">削除</button>':'')+
+      ((s.id&&s.type!=='sub'&&s.type!=='visionfield')||(s.type==='weektheme'&&s.existing)?'<button class="btn dan" id="b-del">削除</button>':'')+
       '<button class="btn" id="b-cancel">キャンセル</button>'+
       '<button class="btn pri" id="b-ok">'+(['weektheme','buffer','wagesettings','workmonth','overtimelog','holidaylog','absencelog'].indexOf(s.type)>-1?'保存':(s.id?'保存':'追加'))+'</button>'+
     '</div></div></div>';
@@ -2234,6 +2281,11 @@ function bind(){
   }});
   q('[data-editbuffer]',function(el){el.onclick=function(){
     S.sheet={type:'buffer',id:null,amount:S.comfortBuffer||''};render();
+  }});
+  q('[data-editvision]',function(el){el.onclick=function(){
+    var vg=S.goals.filter(function(g){return g.horizon==='future';})[0]||null;
+    S.sheet={type:'visionfield',field:el.dataset.editvision,id:vg?vg.id:null,title:vg?vg.title:'',note:vg?(vg.note||''):''};
+    render();
   }});
   q('[data-editwagesettings]',function(el){el.onclick=function(){
     var ws=S.wageSettings;
@@ -2424,6 +2476,17 @@ function submit(){
   if(s.type==='weektheme'){
     var wk=currentWeekPeriod().monday,val=(s.title||'').trim();
     if(val) S.weekNotes[wk]=val; else delete S.weekNotes[wk];
+    S.sheet=null;save();render();return;
+  }
+  if(s.type==='visionfield'){
+    var vTitle=(s.title||'').trim(),vNote=(s.note||'').trim();
+    if(s.field==='title'&&!vTitle){ var errV=document.getElementById('e-title'); if(errV)errV.textContent='目標を入力してください'; return; }
+    var vg=s.id?find(S.goals,s.id):null;
+    if(vg){
+      if(s.field==='title') vg.title=vTitle; else vg.note=vNote;
+    } else {
+      S.goals.push({id:g(),horizon:'future',title:s.field==='title'?vTitle:'',note:s.field==='note'?vNote:''});
+    }
     S.sheet=null;save();render();return;
   }
   if(s.type==='buffer'){
